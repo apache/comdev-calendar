@@ -14,8 +14,9 @@ from typing import Any, TypeVar, cast
 import asfquart.auth
 import asfquart.session
 import quart
+import yaml
 
-from . import ics
+from . import ics, openapi
 from .config import Config
 from .models import Event, ValidationError, parse_event_payload, parse_timestamp
 from .permissions import (
@@ -159,6 +160,21 @@ def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
     @api.route("/healthz")
     async def healthz() -> quart.Response:
         return _json({"status": "ok", "time": int(time.time())})
+
+    def _spec() -> dict[str, Any]:
+        # Advertise the host the caller is already talking to, so "try it out"
+        # in the docs UI hits this deployment rather than a configured guess.
+        base = quart.request.host_url if quart.has_request_context() else ""
+        return openapi.build(cfg, origin=base)
+
+    @api.route("/openapi.json")
+    async def openapi_json() -> quart.Response:
+        return _json(_spec())
+
+    @api.route("/openapi.yaml")
+    async def openapi_yaml() -> quart.Response:
+        body = yaml.safe_dump(_spec(), sort_keys=False, allow_unicode=True, width=100)
+        return quart.Response(body, content_type="application/yaml; charset=utf-8")
 
     # ---- reading events ---------------------------------------------------
 

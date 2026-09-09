@@ -48,7 +48,12 @@ jobs:
         run: npm run build
 
       - name: Check the build produced something servable
-        run: test -f frontend/dist/index.html && test -d frontend/dist/assets
+        run: |
+          test -f frontend/dist/index.html
+          test -d frontend/dist/assets
+          # The API docs page loads Swagger UI from here rather than a CDN, so
+          # a build without it would ship a broken /docs.
+          test -f frontend/dist/vendor/swagger-ui-bundle.js
 
       - name: Is anything different?
         id: diff

@@ -17,6 +17,7 @@
     /** The zone the picker is parked on, used when switching away from local. */
     alternateZone: DisplayZone;
     helpOpen: boolean;
+    docsOpen: boolean;
     onview: (view: ViewName) => void;
     onstep: (direction: number) => void;
     ontoday: () => void;
@@ -25,6 +26,7 @@
     onzone: (zone: DisplayZone) => void;
     onalternatezone: (zone: DisplayZone) => void;
     onhelp: () => void;
+    ondocs: () => void;
   }
 
   let {
@@ -37,6 +39,7 @@
     zone,
     alternateZone,
     helpOpen,
+    docsOpen,
     onview,
     onstep,
     ontoday,
@@ -45,6 +48,7 @@
     onzone,
     onalternatezone,
     onhelp,
+    ondocs,
   }: Props = $props();
 
   let heading = $derived(formatViewTitle(view, cursor));
@@ -90,6 +94,9 @@
 
   <div class="account">
     <button type="button" class="btn" class:active={helpOpen} onclick={onhelp}>Help</button>
+    <button type="button" class="btn" class:active={docsOpen} onclick={ondocs} title="HTTP API documentation">
+      API
+    </button>
     {#if canCreate}
       <button type="button" class="btn primary" onclick={oncreate}>New event</button>
     {/if}

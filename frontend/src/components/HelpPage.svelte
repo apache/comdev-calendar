@@ -2,7 +2,7 @@
   import type { Calendars, SessionInfo } from "../lib/types";
   import type { DisplayZone } from "../lib/timezone";
   import { browserZone, describeDisplayZone, resolveZone } from "../lib/timezone";
-  import { appPath } from "../lib/base";
+  import { apiUrl, appPath } from "../lib/base";
   import { loginUrl, logoutUrl } from "../lib/base";
 
   interface Props {
@@ -274,6 +274,21 @@
         An embed always shows public events only, whoever is looking at it. Your session does not
         travel to another site, which is exactly what you want. The project README lists the
         parameters it takes and the headers a deployment needs.
+      </p>
+    </section>
+
+    <section>
+      <h3>Talking to the calendar from a script</h3>
+      <p>
+        Everything the web interface does goes through a documented HTTP API, and so can anything
+        else. The <strong>API</strong> button at the top of the page opens the reference, with a
+        "try it out" button on each endpoint that calls this deployment for real.
+      </p>
+      <p class="muted small">
+        The description is generated from the running service, so it always matches what is actually
+        deployed. Machine-readable copies live at
+        <a href={apiUrl("/openapi.json")}>openapi.json</a> and
+        <a href={apiUrl("/openapi.yaml")}>openapi.yaml</a>, ready for a client generator.
       </p>
     </section>
 

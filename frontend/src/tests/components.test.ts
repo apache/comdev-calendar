@@ -333,6 +333,7 @@ describe("Header", () => {
       zone: "local",
       alternateZone: "UTC",
       helpOpen: false,
+      docsOpen: false,
       onview: noop,
       onstep: noop,
       ontoday: noop,
@@ -341,6 +342,7 @@ describe("Header", () => {
       onzone: noop,
       onalternatezone: noop,
       onhelp: noop,
+      ondocs: noop,
       ...overrides,
     };
   }
@@ -504,5 +506,12 @@ describe("Header", () => {
     render(Header, { props: headerProps({ onhelp }) });
     await fireEvent.click(screen.getByText("Help"));
     expect(onhelp).toHaveBeenCalledOnce();
+  });
+
+  it("has an API documentation button", async () => {
+    const ondocs = vi.fn();
+    render(Header, { props: headerProps({ ondocs }) });
+    await fireEvent.click(screen.getByText("API"));
+    expect(ondocs).toHaveBeenCalledOnce();
   });
 });

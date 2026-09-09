@@ -46,6 +46,7 @@ access rules are built on. The frontend is Svelte 5 built with Vite.
 - [Embedding the agenda elsewhere](#embedding-the-agenda-elsewhere)
 - [Timezones](#timezones)
 - [The API](#the-api)
+- [API documentation](#api-documentation)
 - [Project layout](#project-layout)
 - [Tests](#tests)
 - [Debugging](#debugging)
@@ -653,6 +654,82 @@ fault:
 { "error": "'end' must be after 'start'", "field": "end" }
 ```
 
+The table above is a summary. The full reference - every parameter, every
+schema, every status code - is generated from the running service and described
+in the next section.
+
+## API documentation
+
+The API describes itself in [OpenAPI](https://spec.openapis.org/oas/v3.1.0)
+3.1, and the calendar serves an interactive Swagger UI for it.
+
+| Where                    | What                                                  |
+| ------------------------ | ------------------------------------------------------ |
+| **API** button, or `/docs` | Swagger UI, with "try it out" against this deployment |
+| `/api/openapi.json`      | the description, for tooling                            |
+| `/api/openapi.yaml`      | the same thing, for reading                             |
+
+```shell
+curl -s https://calendar.apache.org/api/openapi.json | jq '.paths | keys'
+
+# Generate a client
+npx @openapitools/openapi-generator-cli generate \
+  -i https://calendar.apache.org/api/openapi.json -g python -o ./client
+```
+
+The `servers` entry is filled in from the host serving the document, including
+the mount point when the app is [in a
+sub-directory](#serving-from-a-sub-directory), so "try it out" calls the
+deployment the reader is already on. Paths in the document itself stay
+mount-point free, so one description covers either layout.
+
+Requests from the docs page carry `X-No-Redirect: 1` and same-origin
+credentials, so an unauthenticated call returns a readable 401 rather than a
+redirect, and a logged-in reader can exercise the endpoints that need a session.
+
+### How it is kept from going stale
+
+A hand-written API description rots quietly: someone adds a route, nobody
+updates the YAML, and six months later the docs are lying. This one is built in
+`backend/asfcalendar/openapi.py`, in Python, out of the same constants the code
+enforces - `CATEGORIES`, `VISIBILITIES`, `MAX_TITLE_LENGTH`, `SORT_COLUMNS`,
+`MAX_LIMIT`, the project name pattern, the shortlink alphabet. Raise a field
+limit and the published schema follows with nothing to remember.
+
+What cannot be derived - prose, and which status codes an endpoint returns - is
+written out by hand, so `backend/tests/test_openapi.py` guards it instead:
+
+- **Every route is documented, and nothing is documented that does not exist.**
+  Both directions are checked against the application's real `url_map`, so
+  adding an endpoint without describing it fails the build, and so does leaving
+  a description behind after deleting one.
+- **The `Event` schema matches `Event.to_json()`**, field for field. A new field
+  on the dataclass that nobody documented fails too.
+- **Nothing marked `readOnly` is accepted as input**, and the writable schema is
+  a subset of the readable one.
+- **The document validates** against `openapi-spec-validator`, at the root and
+  in a sub-directory, both as built and as served.
+
+So the answer to "is this up to date?" is that CI will not let it be otherwise.
+When you change the API, expect a test to tell you what you forgot.
+
+### Swagger UI is vendored, not fetched
+
+`swagger-ui-dist` is copied into `frontend/public/vendor/` by
+`scripts/vendor-swagger.mjs`, which runs automatically before `npm run dev` and
+`npm run build`. Nothing is loaded from a CDN, which matters for a deployment
+with a strict `Content-Security-Policy`.
+
+It is a static asset rather than a bundled import on purpose. It keeps 1.5MB of
+third-party JavaScript out of the app bundle and its source map - the calendar
+itself is still about 110KB - and, because `frontend/dist` is committed, it
+means those files only change when Swagger UI is upgraded rather than being
+rewritten by every UI change. The cost is that `dist` is about 2.6MB rather than
+750KB, most of it in `dist/vendor/`, added to git once.
+
+To upgrade: `npm install -D swagger-ui-dist@latest && npm run vendor` in
+`frontend/`, then rebuild.
+
 ## Project layout
 
 ```
@@ -665,6 +742,7 @@ backend/
     storage.py       SQLite, including the visibility SQL
     models.py        the Event type and payload validation
     ics.py           iCalendar output
+    openapi.py       the OpenAPI description, built from the real constants
     shortlink.py     shortlink tokens
     config.py        reading config.yaml
   tests/             pytest suite
@@ -673,7 +751,7 @@ frontend/
   src/
     App.svelte       state, loading and routing
     components/      Header, TimezoneSwitch, FilterPanel, the five views,
-                     EventDialog, HelpPage, EmbedAgenda
+                     EventDialog, HelpPage, EmbedAgenda, ApiDocs
     lib/
       api.ts         the API client
       base.ts        the deployment's mount point, for sub-directory installs
@@ -685,6 +763,8 @@ frontend/
       drafts.ts      new and edited events, and a local canEdit
       types.ts       shared types
     tests/           component tests and fixtures
+  public/vendor/     Swagger UI, copied from node_modules at build time
+  scripts/           that copy step
 
 config.yaml.example  documented configuration
 images.png           the site logo; copied to frontend/public/icon.png
@@ -704,7 +784,9 @@ uv run ruff check backend           # lint
 
 The suite covers the access rules exhaustively, the storage layer including the
 agreement between the SQL filter and `can_view`, payload validation, the
-iCalendar output, and the HTTP API end to end through Quart's test client.
+iCalendar output, the OpenAPI description (see
+[above](#how-it-is-kept-from-going-stale)), and the HTTP API end to end through
+Quart's test client.
 
 Sessions in the API tests are set through the real signed session cookie rather
 than by patching, so they take the same path asfquart does in production. The
@@ -840,6 +922,18 @@ from asfcalendar.permissions import can_view, can_write
 session = ClientSession({"uid": "bob", "pmcs": ["httpd"], "projects": ["httpd"]})
 can_view(some_event, session)
 ```
+
+**The API documentation page is blank, or says Swagger UI could not be loaded.**
+The vendored files are missing from the build. Run `npm run build` in
+`frontend/`, which copies them in first, and check
+`curl -sI https://your.host/vendor/swagger-ui-bundle.js` comes back 200. If the
+browser console reports a CSP violation instead, the deployment's
+`script-src`/`style-src` needs to allow the calendar's own origin.
+
+**A test fails saying an endpoint is "missing from openapi.py".** That is the
+anti-drift check doing its job: a route was added or changed without updating
+the description. The message names the method and path; add it to
+`_paths()` in `backend/asfcalendar/openapi.py`.
 
 **An embedded agenda shows an empty frame.** Open the browser console on the
 *host* page. A `frame-ancestors` refusal is reported there and nowhere else, and

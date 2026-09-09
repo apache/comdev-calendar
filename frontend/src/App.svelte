@@ -25,6 +25,7 @@
   import AgendaView from "./components/AgendaView.svelte";
   import EventDialog from "./components/EventDialog.svelte";
   import HelpPage from "./components/HelpPage.svelte";
+  import ApiDocs from "./components/ApiDocs.svelte";
 
   const VIEW_STORAGE_KEY = "asf-calendar-view";
   const ZONE_STORAGE_KEY = "asf-calendar-zone";
@@ -34,6 +35,7 @@
   const MAX_COMPARE_ZONES = 3;
   const SHORTLINK_PATTERN = /^\/e\/([A-Za-z0-9]+)\/?$/;
   const HELP_PATH = "/help";
+  const DOCS_PATH = "/docs";
 
   /** The current browser path with the deployment's mount point removed. */
   function routePath(): string | null {
@@ -94,6 +96,7 @@
   // The cursor is a wall date: its local getters read as the display zone.
   let cursor = $state<Date>(startOfDay(nowInZone(initialZone())));
   let helpOpen = $state<boolean>(routePath() === HELP_PATH);
+  let docsOpen = $state<boolean>(routePath() === DOCS_PATH);
   let events = $state<CalendarEvent[]>([]);
   let session = $state<SessionInfo | null>(null);
   let calendars = $state<Calendars | null>(null);
@@ -189,6 +192,7 @@
     const path = routePath();
     if (path === null) return; // Not a URL this app is mounted on.
     helpOpen = path === HELP_PATH;
+    docsOpen = path === DOCS_PATH;
     const match = SHORTLINK_PATTERN.exec(path);
     if (!match) return;
     try {
@@ -251,6 +255,7 @@
     selected = null;
     dialogError = null;
     helpOpen = false;
+    docsOpen = false;
     // The form is filled in from the wall clock the user is looking at.
     draft = newDraft(fromWall(when, zone), calendars);
   }
@@ -317,7 +322,14 @@
 
   function toggleHelp() {
     helpOpen = !helpOpen;
+    if (helpOpen) docsOpen = false;
     navigate(helpOpen ? HELP_PATH : "/");
+  }
+
+  function toggleDocs() {
+    docsOpen = !docsOpen;
+    if (docsOpen) helpOpen = false;
+    navigate(docsOpen ? DOCS_PATH : "/");
   }
 </script>
 
@@ -332,9 +344,11 @@
     {zone}
     {alternateZone}
     {helpOpen}
+    {docsOpen}
     onview={(next) => {
       view = next;
       helpOpen = false;
+      docsOpen = false;
     }}
     onstep={(direction) => (cursor = step(view, cursor, direction))}
     ontoday={() => (cursor = startOfDay(nowInZone(zone)))}
@@ -343,6 +357,7 @@
     onzone={setZone}
     onalternatezone={(next) => (alternateZone = next)}
     onhelp={toggleHelp}
+    ondocs={toggleDocs}
   />
 
   {#if loadError}
@@ -355,6 +370,8 @@
   <div class="body">
     {#if helpOpen}
       <HelpPage {calendars} {session} {zone} {compareZones} onclose={toggleHelp} />
+    {:else if docsOpen}
+      <ApiDocs onclose={toggleDocs} />
     {:else}
       {#if showFilters}
         <FilterPanel

@@ -69,7 +69,12 @@ jobs:
         run: npm run build
 
       - name: Check the build produced something servable
-        run: test -f dist/index.html && test -d dist/assets
+        run: |
+          test -f dist/index.html
+          test -d dist/assets
+          # The API docs page loads Swagger UI from here rather than a CDN, so
+          # a build without it would ship a broken /docs.
+          test -f dist/vendor/swagger-ui-bundle.js
 
       - name: Upload the build
         uses: actions/upload-artifact@v4
