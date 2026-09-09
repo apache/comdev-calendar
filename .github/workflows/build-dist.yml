@@ -1,0 +1,110 @@
+name: Build dist
+
+# Rebuilds frontend/dist and commits it back, so a deployment can serve the UI
+# straight from a checkout without needing Node installed.
+#
+# The commit is made with GITHUB_TOKEN, and GitHub deliberately does not start
+# new workflow runs from those, so this cannot set itself off again. The
+# frontend/dist path exclusion below is a second line of defence in case the
+# token is ever swapped for a PAT.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "frontend/**"
+      - "!frontend/dist/**"
+      - ".github/workflows/build-dist.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One build per branch. A newer push makes an in-flight build obsolete, so let
+# it be cancelled rather than queueing up a commit nobody wants.
+concurrency:
+  group: build-dist-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Rebuild and commit frontend/dist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Check the build produced something servable
+        run: test -f frontend/dist/index.html && test -d frontend/dist/assets
+
+      - name: Is anything different?
+        id: diff
+        run: |
+          if [ -z "$(git status --porcelain -- frontend/dist)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "frontend/dist already matches the source; nothing to commit."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short -- frontend/dist
+          fi
+
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          message="Rebuild frontend/dist for ${GITHUB_SHA:0:8}
+
+          Built from ${GITHUB_SHA} by the Build dist workflow."
+
+          # Keep the built output somewhere git will not touch, so a retry can
+          # put it back on top of a branch that moved under us.
+          built="${RUNNER_TEMP}/dist"
+          rm -rf "$built"
+          cp -r frontend/dist "$built"
+
+          for attempt in 1 2 3; do
+            git add -A -- frontend/dist
+
+            if git diff --cached --quiet -- frontend/dist; then
+              echo "Nothing left to commit after rebasing; another run got there first."
+              exit 0
+            fi
+
+            git commit -m "$message"
+
+            if git push origin "HEAD:${BRANCH}"; then
+              echo "Pushed on attempt ${attempt}."
+              exit 0
+            fi
+
+            echo "Push rejected, the branch moved. Rebuilding the commit on the new tip."
+            git fetch origin "$BRANCH"
+            git reset --hard "origin/${BRANCH}"
+            rm -rf frontend/dist
+            cp -r "$built" frontend/dist
+            # The source may have moved on as well, in which case this output is
+            # already stale. That is fine: the push that moved the branch starts
+            # its own run, and that one will produce the matching build.
+          done
+
+          echo "::error::Could not push frontend/dist after three attempts."
+          exit 1

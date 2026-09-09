@@ -15,7 +15,6 @@ from typing import Any
 import asfquart
 import asfquart.auth
 import asfquart.generics
-import asfquart.session
 import quart
 
 from . import __version__
@@ -125,7 +124,6 @@ def create_app(
     cfg = config
 
     # legacy OAuth, to be changed to OIDC once wired in
-    import asfquart.generics
     asfquart.generics.OAUTH_URL_INIT = "https://oauth.apache.org/auth?state=%s&redirect_uri=%s"
     asfquart.generics.OAUTH_URL_CALLBACK = "https://oauth.apache.org/token?code=%s"
 

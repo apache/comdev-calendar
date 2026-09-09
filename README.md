@@ -207,13 +207,20 @@ Useful backend flags:
 
 ### Production
 
-Build the frontend once, then run the backend on its own. It serves
-`frontend/dist` as static files and falls back to `index.html` for client-side
-routes.
+`frontend/dist` is committed to the repository, kept up to date by CI (see
+[Committed build output](#committed-build-output)). A deployment is therefore a
+checkout and the backend, with no Node involved:
+
+```shell
+uv run asf-calendar
+```
+
+The backend serves `frontend/dist` as static files and falls back to
+`index.html` for client-side routes. If you are working from a branch where the
+build is stale, or you have just changed the UI locally, rebuild it yourself:
 
 ```shell
 cd frontend && npm ci && npm run build && cd ..
-uv run asf-calendar
 ```
 
 The server is [hypercorn](https://hypercorn.readthedocs.io/). To run it directly,
@@ -473,21 +480,65 @@ move at all.
 
 ### CI
 
-Two GitHub workflows:
+Three GitHub workflows, all path-filtered so a backend change does not start the
+frontend jobs and vice versa:
 
 - `.github/workflows/backend.yml` runs ruff, `ruff format --check`, mypy, and
   pytest on Python 3.11, 3.12 and 3.13, then boots the real server and calls it.
 - `.github/workflows/frontend.yml` runs svelte-check and vitest on Node 20 and
-  22, builds the UI, and uploads `frontend/dist` as an artifact.
+  22, builds the UI, and uploads `frontend/dist` as an artifact. This is the one
+  that runs on pull requests.
+- `.github/workflows/build-dist.yml` rebuilds `frontend/dist` on pushes to the
+  default branch and commits the result back if it differs. See below.
 
-Both are path-filtered, so a backend change does not run the frontend jobs.
+### Committed build output
+
+`frontend/dist` is tracked in git rather than ignored, so that deploying the app
+needs nothing but a checkout and Python. Keeping it honest by hand would be
+tedious and easy to forget, so `build-dist.yml` does it: on every push that
+touches `frontend/` it runs `npm ci && npm run build`, compares the result with
+what is committed, and pushes a "Rebuild frontend/dist" commit when they differ.
+When they match, which is the usual case for a backend-only or docs change, it
+does nothing.
+
+Some details that matter if you are changing that workflow:
+
+- **It cannot set itself off.** GitHub does not start new workflow runs from
+  commits pushed with `GITHUB_TOKEN`. The `!frontend/dist/**` path exclusion is
+  a second line of defence, for the day somebody swaps in a PAT.
+- **The build is reproducible.** Vite names its output by content hash, so an
+  unchanged source tree produces byte-identical files and the "did anything
+  change" check is trustworthy rather than approximate.
+- **Stale assets are removed.** The commit uses `git add -A`, so the previous
+  hashed filenames go away instead of accumulating.
+- **Concurrent pushes are handled.** Runs are serialised per branch and an
+  in-flight build is cancelled by a newer push, since its output is obsolete
+  anyway. If a push is still rejected because the branch moved, the workflow
+  replays the build onto the new tip, up to three times.
+
+You will get merge conflicts in `frontend/dist` if two branches both change the
+UI. Resolve them by rebuilding rather than by editing: `npm run build` in
+`frontend/`, then `git add frontend/dist`. Or simply take either side and let CI
+correct it on the next push to the default branch.
+
+The build includes a source map, which is most of the roughly 750 KB in `dist`
+and changes whenever the UI does. It is there because it makes production
+problems debuggable. If you would rather not carry it in the history, set
+`sourcemap: false` in `frontend/vite.config.ts`.
 
 ## Debugging
 
 **Nothing but a page saying there is no frontend build.** The backend could not
-find `frontend/dist/index.html`. Either run `npm run build` in `frontend/`, or
-use the Vite dev server and open port 5173 instead of 8080. The page tells you
-which path it looked in.
+find `frontend/dist/index.html`. It is committed to the repository, so this
+usually means a `make clean`, a stray `rm -rf`, or a checkout of a branch from
+before it was tracked. Run `npm run build` in `frontend/`, or use the Vite dev
+server and open port 5173 instead of 8080. The page tells you which path it
+looked in.
+
+**The deployed UI is not the code you just merged.** `frontend/dist` is
+committed, and the `Build dist` workflow updates it on pushes to the default
+branch. Check that workflow ran and pushed its commit; a deployment from before
+that commit will still be serving the previous build.
 
 **The UI loads but every request fails.** Open the browser's network tab. If
 `/api/session` returns HTML, the Vite proxy is not reaching the backend; check

@@ -13,7 +13,8 @@ help:
 	@echo "typecheck      mypy and svelte-check"
 	@echo "format         reformat the Python code"
 	@echo "check          lint, typecheck and test"
-	@echo "clean          remove build output and caches"
+	@echo "clean          remove caches and build output"
+	@echo "               (frontend/dist is committed; restore it with 'make build')"
 
 install:
 	uv sync --all-groups
