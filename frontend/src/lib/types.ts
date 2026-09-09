@@ -71,7 +71,8 @@ export interface Calendars {
     foundation: boolean;
   };
   title: string;
-  default_display_zone: "local" | "utc";
+  /** "local", or an IANA zone name such as "UTC" or "Europe/Berlin". */
+  default_display_zone: string;
 }
 
 export interface Filters {

@@ -3,6 +3,8 @@
   import { CATEGORIES } from "../lib/types";
   import { categoryLabel, projectHue } from "../lib/events";
   import { toggle } from "../lib/filters";
+  import type { DisplayZone } from "../lib/timezone";
+  import { LOCAL, MAJOR_ZONES, browserZone, describeDisplayZone, resolveZone, zoneLabel } from "../lib/timezone";
 
   interface Props {
     filters: Filters;
@@ -10,10 +12,28 @@
     projects: string[];
     view: ViewName;
     feedUrl: string;
+    /** The zone the calendar is drawn in, set from the header. */
+    zone: DisplayZone;
+    /** Extra clocks shown beside it. */
+    compareZones: DisplayZone[];
+    /** How many comparison clocks the layout can take. */
+    maxCompareZones?: number;
     onchange: (filters: Filters) => void;
+    oncomparezones: (zones: DisplayZone[]) => void;
   }
 
-  let { filters, calendars, projects, view, feedUrl, onchange }: Props = $props();
+  let {
+    filters,
+    calendars,
+    projects,
+    view,
+    feedUrl,
+    zone,
+    compareZones,
+    maxCompareZones = 3,
+    onchange,
+    oncomparezones,
+  }: Props = $props();
 
   function setCategory(category: Category) {
     onchange({ ...filters, categories: toggle(filters.categories, category) });
@@ -25,6 +45,20 @@
 
   function allProjects(on: boolean) {
     onchange({ ...filters, projects: new Set(on ? projects : []) });
+  }
+
+  let now = $derived(new Date());
+  // A clock already on screen as the primary zone is not worth offering again.
+  let alreadyShown = $derived(new Set([resolveZone(zone), ...compareZones.map(resolveZone)]));
+  let canAddMore = $derived(compareZones.length < maxCompareZones);
+
+  function addCompareZone(chosen: string) {
+    if (!chosen || alreadyShown.has(resolveZone(chosen))) return;
+    oncomparezones([...compareZones, chosen]);
+  }
+
+  function removeCompareZone(chosen: DisplayZone) {
+    oncomparezones(compareZones.filter((candidate) => candidate !== chosen));
   }
 </script>
 
@@ -114,6 +148,61 @@
       </label>
     </section>
   {/if}
+
+  <section class="timezones">
+    <h3>Timezones</h3>
+    <p class="muted">
+      Drawn in <strong>{describeDisplayZone(zone, now)}</strong>, which you can change at the top of
+      the page.
+    </p>
+
+    {#if compareZones.length > 0}
+      <ul class="chips">
+        {#each compareZones as other (other)}
+          <li>
+            <span title={zoneLabel(resolveZone(other), now)}>{describeDisplayZone(other, now)}</span>
+            <button
+              type="button"
+              onclick={() => removeCompareZone(other)}
+              aria-label={`Stop showing ${resolveZone(other)}`}
+            >
+              &#215;
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if canAddMore}
+      <label class="field">
+        <span class="visually-hidden">Also show another timezone</span>
+        <select
+          value=""
+          onchange={(event) => {
+            addCompareZone(event.currentTarget.value);
+            event.currentTarget.value = "";
+          }}
+        >
+          <option value="">Also show...</option>
+          {#if !alreadyShown.has(browserZone())}
+            <option value={LOCAL}>Local - {zoneLabel(browserZone(), now)}</option>
+          {/if}
+          {#each MAJOR_ZONES as group (group.region)}
+            <optgroup label={group.region}>
+              {#each group.zones.filter((name) => !alreadyShown.has(name)) as name (name)}
+                <option value={name}>{zoneLabel(name, now)}</option>
+              {/each}
+            </optgroup>
+          {/each}
+        </select>
+      </label>
+    {/if}
+
+    <p class="muted small">
+      Comparison clocks appear beside the week and day grids, on agenda rows, and in an event's
+      details.
+    </p>
+  </section>
 
   <section class="subscribe">
     <h3>Subscribe</h3>
@@ -213,5 +302,55 @@
   .subscribe p {
     margin: 0 0 0.5rem;
     font-size: 12px;
+  }
+
+  .timezones p {
+    margin: 0 0 0.5rem;
+    font-size: 12px;
+  }
+
+  .timezones .small {
+    margin: 0.5rem 0 0;
+    font-size: 11px;
+  }
+
+  .chips {
+    list-style: none;
+    margin: 0 0 0.5rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .chips li {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 12px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.1rem 0.2rem 0.1rem 0.45rem;
+  }
+
+  .chips li span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chips button {
+    background: none;
+    border: 0;
+    padding: 0 0.3rem;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text-muted);
+  }
+
+  .chips button:hover {
+    color: var(--asf-red);
   }
 </style>

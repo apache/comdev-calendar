@@ -23,11 +23,12 @@ in it opens showing everything you have access to: your own events, every
 project you belong to, and the foundation calendar.
 
 It is timezone aware in both directions. When you add an event you say which
-timezone the times are in, and everybody else sees them on their own clock. A
-switch at the top of the page flips the whole calendar between your browser's
-timezone and UTC. There is also a help page, at `/help`, that explains the
-views, the filters, the timezone switch and exactly what each kind of user can
-see and do.
+timezone the times are in, and everybody else sees them on their own clock. The
+switch at the top of the page draws the whole calendar in your browser's
+timezone or in any of the major timezones, and you can pin up to three more
+alongside it to see an event in the organiser's time and in yours at once.
+There is also a help page, at `/help`, that explains the views, the filters, the
+timezone controls and exactly what each kind of user can see and do.
 
 The backend is [asfquart](https://github.com/apache/infrastructure-asfquart)
 (Quart with ASF conventions layered on top), which provides the OAuth login
@@ -42,6 +43,7 @@ access rules are built on. The frontend is Svelte 5 built with Vite.
 - [Configuration](#configuration)
 - [Running it](#running-it)
 - [Serving from a sub-directory](#serving-from-a-sub-directory)
+- [Embedding the agenda elsewhere](#embedding-the-agenda-elsewhere)
 - [Timezones](#timezones)
 - [The API](#the-api)
 - [Project layout](#project-layout)
@@ -356,6 +358,148 @@ BASE_PATH=/calendar npm run dev
 For everyday work it is simpler to leave `base_path` empty in your local
 `config.yaml` and test the sub-directory setup against the built frontend.
 
+## Embedding the agenda elsewhere
+
+The agenda view can be dropped into another site as an iframe: a project's own
+website can carry a live list of its upcoming events without anybody copying
+dates about by hand.
+
+```html
+<iframe
+  src="https://calendar.apache.org/embed/agenda?project=httpd&limit=8&title=Upcoming+httpd+events"
+  title="Upcoming httpd events"
+  width="100%"
+  height="420"
+  loading="lazy"
+  style="border: 1px solid #d9dee5; border-radius: 6px;"
+></iframe>
+```
+
+The embed is a separate, much smaller app than the calendar: no header, no
+filter panel, no editing, and it asks the backend for nothing but the events it
+is going to draw. Clicking an event opens its shortlink in a new tab rather
+than navigating inside the frame.
+
+### What it shows
+
+**Public events only, always.** Session cookies are `SameSite=Strict`, so a
+cross-site iframe never carries one and the embed is an anonymous view. This is
+the intended behaviour rather than a limitation to route around: a page on
+somebody else's site should not be able to display private project or
+foundation events, even to somebody who would be allowed to see them on the
+calendar itself.
+
+### Parameters
+
+All optional, all on the query string.
+
+| Parameter               | Default | What it does                                                   |
+| ----------------------- | ------- | -------------------------------------------------------------- |
+| `project`, `projects`   | all     | project names; repeat the parameter or comma-separate           |
+| `category`, `categories`| all     | `personal`, `project` or `foundation`                           |
+| `q`                     | -       | text search over title, description, location and project       |
+| `days`                  | `60`    | how far ahead to look, 1 to 366                                 |
+| `limit`                 | `20`    | how many events to show, 1 to 100                               |
+| `zone`                  | `local` | `local`, or an IANA name such as `UTC` or `Europe/Berlin`       |
+| `title`                 | -       | a heading above the list                                        |
+| `showzone`              | `1`     | whether to say which clock the times are on                     |
+| `transparent`           | `0`     | drop the background so the host page shows through              |
+| `theme`                 | `auto`  | `auto`, `light` or `dark`; `auto` follows the reader's setting  |
+| `credit`                | `1`     | whether to show the "ASF Community Calendar" link at the foot   |
+
+Numbers outside their range are clamped rather than rejected, and anything
+unrecognised falls back to the default, so a mistyped URL degrades to a sensible
+embed instead of an error.
+
+### Sizing the frame
+
+An iframe cannot size itself to its content. The embed measures itself and posts
+its height to the page framing it, so the host can resize:
+
+```html
+<script>
+  window.addEventListener("message", (event) => {
+    // Check the origin: any page can post a message.
+    if (event.origin !== "https://calendar.apache.org") return;
+    if (event.data?.type !== "asf-calendar-embed:height") return;
+    document.querySelector("iframe.asf-calendar").style.height = `${event.data.height}px`;
+  });
+</script>
+```
+
+The message carries nothing but a pixel height. It is sent with a `*` target
+origin, because the embed has no way of knowing who is framing it, which is why
+the listener above has to check `event.origin` itself.
+
+If you would rather not run any script, give the iframe a fixed height and a
+`limit` that fits it.
+
+### Headers the deployment needs
+
+The application does not set framing or CORS headers - that is the reverse
+proxy's job, and deliberately so, since only the deployment knows who should be
+allowed to embed it. Nothing in the app forbids framing, so there is nothing to
+undo; what is needed is permission.
+
+**To allow framing**, set `frame-ancestors` on the calendar's responses, and do
+not send `X-Frame-Options: DENY` or `SAMEORIGIN`, which would override it in
+older browsers:
+
+```apache
+# Who may embed the calendar. Be specific; 'self' alone blocks other sites.
+Header always set Content-Security-Policy "frame-ancestors 'self' https://*.apache.org"
+Header always unset X-Frame-Options
+```
+
+Scoping that to the embed route only, so the rest of the calendar stays
+unframeable:
+
+```apache
+<Location "/embed/">
+    Header always set Content-Security-Policy "frame-ancestors 'self' https://*.apache.org"
+    Header always unset X-Frame-Options
+</Location>
+```
+
+**CORS is not needed for the iframe embed.** A framed page fetches its own
+origin, so no cross-origin request happens. You only need CORS if somebody wants
+to call `/api/events` from their own JavaScript and render it themselves:
+
+```apache
+<Location "/api/">
+    Header always set Access-Control-Allow-Origin "https://example.apache.org"
+    Header always append Vary "Origin"
+</Location>
+```
+
+Two things to get right there:
+
+- **Do not send `Access-Control-Allow-Credentials: true`.** Combined with a
+  permissive origin it would let another site read a logged-in user's private
+  events. Anonymous cross-origin reads are the only thing that should work.
+- **Send `Vary: Origin`** if the allowed origin varies, or a cache will hand one
+  site's response to another.
+
+`Access-Control-Allow-Origin: *` is defensible here, since the anonymous API
+returns only public events, but it is worth deciding deliberately rather than by
+default.
+
+### Checking it works
+
+```shell
+# The route serves the app
+curl -sI https://calendar.apache.org/embed/agenda | head -1
+
+# The data it will draw, as an anonymous caller sees it
+curl -s 'https://calendar.apache.org/api/events?project=httpd&limit=5&sort=start' | jq '.events[].title'
+
+# The framing header is present and permissive enough
+curl -sI https://calendar.apache.org/embed/agenda | grep -i -e content-security-policy -e x-frame-options
+```
+
+If the frame comes up blank, look in the browser console: a `frame-ancestors`
+refusal is reported there and nowhere else.
+
 ## Timezones
 
 An event happens at one moment in time, but that moment reads differently on
@@ -371,16 +515,32 @@ all the way through:
   Berlin means 13:00 UTC in July and 14:00 UTC in January, and the app works
   that out. Changing the timezone in the form keeps the clock reading and moves
   the instant, which is what an organiser almost always means.
-- **The display timezone** is the clock the reader wants. The switch in the
-  header flips between the browser's own zone and UTC. It moves everything
-  together: the grid columns, the position of each block in the day, the times
-  on each event, and which day an event falls on. The choice is remembered in
-  the browser; `app.default_display_zone` in the config decides what a first-time
-  visitor gets.
+- **The display timezone** is the clock the reader wants the calendar drawn on.
+  The switch in the header has two sides: **Local**, which follows the browser
+  and is labelled with the place it resolves to, and a picker holding the major
+  timezones, which starts on UTC. Choosing either redraws everything - the grid
+  columns, the position of each block in the day, the times on each event, and
+  which day an event falls on. The choice is remembered in the browser;
+  `app.default_display_zone` decides what a first-time visitor gets, and takes
+  `local` or any IANA name.
+- **Comparison timezones** are extra clocks shown next to the display one. Add
+  up to three under "Timezones" in the filter panel and they appear as extra
+  hour columns beside the week and day grids, after the time on each agenda
+  row, and in an event's details. A grid has one time axis, so these are labels
+  rather than extra columns of events - which is all you need to answer "what
+  time is that for me".
 
-When an event's own timezone is not the one you are reading in, its details show
-both: the headline time on your clock, and a line saying how the organiser
-entered it.
+An event's details show the headline time on your clock, then a line per other
+clock worth knowing about: the organiser's own zone, and each comparison zone
+you have added. Clocks that read the same as yours are left out rather than
+repeated.
+
+Zone names such as `Europe/Copenhagen` are how the tz database identifies a
+clock, not a claim about where anyone is sitting, so the UI shows the city
+together with the current abbreviation and offset - "Copenhagen (CEST,
+UTC+02:00)" - to make it obvious why that particular clock. Where a zone has no
+letter abbreviation the offset stands on its own, since Intl would otherwise
+just repeat it back as "GMT+9".
 
 **All-day events are dates, not instants.** They are snapped to whole UTC days
 and have no organiser timezone, exactly as iCalendar treats a `VALUE=DATE`
@@ -391,6 +551,11 @@ day after the last day.
 In the iCalendar export, `DTSTART` and `DTEND` are always UTC, which every
 client reads correctly. The organiser's zone rides along as an
 `X-ASF-EVENT-TIMEZONE` property for anything that cares.
+
+The display picker offers a short list of well-known zones rather than all ~400
+the tz database knows, because it answers "show me this calendar in Tokyo time".
+The event form still offers the full list, since an organiser really might be
+anywhere.
 
 The conversions live in `frontend/src/lib/timezone.ts`. The trick it uses is
 worth knowing about if you go reading it: a "wall date" is an ordinary
@@ -507,12 +672,14 @@ backend/
 frontend/
   src/
     App.svelte       state, loading and routing
-    components/      Header, FilterPanel, the five views, EventDialog, HelpPage
+    components/      Header, TimezoneSwitch, FilterPanel, the five views,
+                     EventDialog, HelpPage, EmbedAgenda
     lib/
       api.ts         the API client
       base.ts        the deployment's mount point, for sub-directory installs
       dates.ts       date arithmetic and grid maths
-      timezone.ts    wall-clock conversions and the display-zone switch
+      timezone.ts    wall-clock conversions, zone naming, the zone picker
+      embed.ts       options for the embeddable agenda
       events.ts      grouping, overlap layout, colours
       filters.ts     client-side filtering and sorting
       drafts.ts      new and edited events, and a local canEdit
@@ -674,6 +841,18 @@ session = ClientSession({"uid": "bob", "pmcs": ["httpd"], "projects": ["httpd"]}
 can_view(some_event, session)
 ```
 
+**An embedded agenda shows an empty frame.** Open the browser console on the
+*host* page. A `frame-ancestors` refusal is reported there and nowhere else, and
+no request reaches the calendar at all. See
+[Embedding the agenda elsewhere](#embedding-the-agenda-elsewhere) for the header
+the deployment needs.
+
+**An embedded agenda is missing events somebody expects to see.** It is an
+anonymous view by design: `SameSite=Strict` session cookies are not sent to a
+cross-site frame, so only public events appear. Compare with
+`curl -s '.../api/events?...'` with no cookie, which sees exactly what the embed
+sees.
+
 **Under a sub-directory, the page loads but is unstyled and blank.** The browser
 is fetching the assets from the wrong place. Look at the served HTML: the
 `<base href>` should be `/calendar/`, matching `server.base_path`. If it says
@@ -689,6 +868,12 @@ rewriting `/calendar/x` to `/x`. The message prints the directive it expects.
 path in `server.base_url`. Only the scheme and host are read from it now, so
 this should not happen; if it does, the `base_path` value itself has the prefix
 twice.
+
+**The comparison hour columns are an hour out later in the week.** A week view
+shares one set of hour gutters across all seven days, so the labels are computed
+for the first day shown. If one of the two zones changes for daylight saving
+mid-week, the rest of that week reads an hour off. The day view, which has one
+column, is always exact.
 
 **An event shows up on the wrong day.** Check the timezone switch in the header.
 An event at 22:00 UTC is the following morning in Tokyo, and the calendar will

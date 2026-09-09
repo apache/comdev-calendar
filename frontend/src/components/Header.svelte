@@ -3,8 +3,8 @@
   import { VIEWS } from "../lib/types";
   import { formatViewTitle } from "../lib/dates";
   import type { DisplayZone } from "../lib/timezone";
-  import { describeDisplayZone, explainDisplayZone } from "../lib/timezone";
   import { assetUrl, loginUrl, logoutUrl } from "../lib/base";
+  import TimezoneSwitch from "./TimezoneSwitch.svelte";
 
   interface Props {
     title: string;
@@ -14,6 +14,8 @@
     loading: boolean;
     canCreate: boolean;
     zone: DisplayZone;
+    /** The zone the picker is parked on, used when switching away from local. */
+    alternateZone: DisplayZone;
     helpOpen: boolean;
     onview: (view: ViewName) => void;
     onstep: (direction: number) => void;
@@ -21,6 +23,7 @@
     oncreate: () => void;
     ontogglefilters: () => void;
     onzone: (zone: DisplayZone) => void;
+    onalternatezone: (zone: DisplayZone) => void;
     onhelp: () => void;
   }
 
@@ -32,6 +35,7 @@
     loading,
     canCreate,
     zone,
+    alternateZone,
     helpOpen,
     onview,
     onstep,
@@ -39,11 +43,11 @@
     oncreate,
     ontogglefilters,
     onzone,
+    onalternatezone,
     onhelp,
   }: Props = $props();
 
   let heading = $derived(formatViewTitle(view, cursor));
-  let localLabel = $derived(describeDisplayZone("local"));
 </script>
 
 <header>
@@ -82,28 +86,7 @@
     {/each}
   </div>
 
-  <div class="zones" role="group" aria-label="Display timezone">
-    <button
-      type="button"
-      class="zone"
-      class:active={zone === "local"}
-      aria-pressed={zone === "local"}
-      title={explainDisplayZone("local")}
-      onclick={() => onzone("local")}
-    >
-      {localLabel}
-    </button>
-    <button
-      type="button"
-      class="zone"
-      class:active={zone === "utc"}
-      aria-pressed={zone === "utc"}
-      title={explainDisplayZone("utc")}
-      onclick={() => onzone("utc")}
-    >
-      UTC
-    </button>
-  </div>
+  <TimezoneSwitch {zone} alternate={alternateZone} {onzone} onalternate={onalternatezone} />
 
   <div class="account">
     <button type="button" class="btn" class:active={helpOpen} onclick={onhelp}>Help</button>
@@ -203,36 +186,6 @@
     background: var(--asf-red);
     color: #fff;
     font-weight: 600;
-  }
-
-  .zones {
-    display: flex;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-
-  .zone {
-    background: var(--bg-panel);
-    border: 0;
-    border-right: 1px solid var(--border);
-    padding: 0.35rem 0.6rem;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .zone:last-child {
-    border-right: 0;
-  }
-
-  .zone:hover {
-    background: var(--bg-hover);
-  }
-
-  .zone.active {
-    background: var(--bg-subtle);
-    font-weight: 700;
-    box-shadow: inset 0 -2px 0 var(--asf-red);
   }
 
   .btn.active {

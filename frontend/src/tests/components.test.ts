@@ -250,7 +250,10 @@ describe("FilterPanel", () => {
       projects: ["httpd", "tomcat"],
       view: "month" as const,
       feedUrl: "/api/events.ics",
+      zone: "UTC",
+      compareZones: [] as string[],
       onchange: noop,
+      oncomparezones: noop,
       ...overrides,
     };
   }
@@ -327,7 +330,8 @@ describe("Header", () => {
       session: { authenticated: false, login_url: "/auth?login=/" },
       loading: false,
       canCreate: false,
-      zone: "local" as const,
+      zone: "local",
+      alternateZone: "UTC",
       helpOpen: false,
       onview: noop,
       onstep: noop,
@@ -335,6 +339,7 @@ describe("Header", () => {
       oncreate: noop,
       ontogglefilters: noop,
       onzone: noop,
+      onalternatezone: noop,
       onhelp: noop,
       ...overrides,
     };
@@ -426,28 +431,72 @@ describe("Header", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("offers a switch between the local timezone and UTC", () => {
+  it("offers the local zone and a picker for anywhere else", () => {
     render(Header, { props: headerProps() });
     const group = screen.getByRole("group", { name: "Display timezone" });
-    const buttons = within(group).getAllByRole("button");
-    expect(buttons).toHaveLength(2);
-    expect(buttons[1]).toHaveTextContent("UTC");
+    expect(within(group).getByText("Local")).toBeInTheDocument();
+    expect(within(group).getByLabelText("Show the calendar in another timezone")).toBeInTheDocument();
   });
 
-  it("marks the timezone currently in use", () => {
-    render(Header, { props: headerProps({ zone: "utc" }) });
+  it("says which place the local zone is, so it is obvious why that clock", () => {
+    render(Header, { props: headerProps() });
     const group = screen.getByRole("group", { name: "Display timezone" });
-    const [local, utc] = within(group).getAllByRole("button");
-    expect(utc).toHaveAttribute("aria-pressed", "true");
-    expect(local).toHaveAttribute("aria-pressed", "false");
+    // The suite runs in UTC, so that is what the browser reports.
+    expect(within(group).getByText("Local").closest("button")).toHaveTextContent("UTC");
   });
 
-  it("reports a timezone change", async () => {
+  it("offers the major zones grouped by region", () => {
+    render(Header, { props: headerProps() });
+    const picker = screen.getByLabelText<HTMLSelectElement>("Show the calendar in another timezone");
+    const groups = [...picker.querySelectorAll("optgroup")].map((group) => group.label);
+    expect(groups).toContain("Americas");
+    expect(groups).toContain("Asia");
+    const values = [...picker.querySelectorAll("option")].map((option) => option.value);
+    expect(values).toContain("UTC");
+    expect(values).toContain("Asia/Tokyo");
+  });
+
+  it("labels each zone with its city and offset", () => {
+    render(Header, { props: headerProps() });
+    const picker = screen.getByLabelText<HTMLSelectElement>("Show the calendar in another timezone");
+    const tokyo = [...picker.querySelectorAll("option")].find((o) => o.value === "Asia/Tokyo");
+    expect(tokyo?.textContent).toBe("Tokyo (UTC+09:00)");
+  });
+
+  it("defaults the picker to UTC", () => {
+    render(Header, { props: headerProps() });
+    expect(screen.getByLabelText("Show the calendar in another timezone")).toHaveValue("UTC");
+  });
+
+  it("marks whichever side is in use", () => {
+    render(Header, { props: headerProps({ zone: "local" }) });
+    const group = screen.getByRole("group", { name: "Display timezone" });
+    expect(within(group).getByRole("button")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("marks the picker instead when a named zone is in use", () => {
+    render(Header, { props: headerProps({ zone: "Asia/Tokyo", alternateZone: "Asia/Tokyo" }) });
+    const group = screen.getByRole("group", { name: "Display timezone" });
+    expect(within(group).getByRole("button")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("reports a switch back to local", async () => {
     const onzone = vi.fn();
-    render(Header, { props: headerProps({ onzone }) });
+    render(Header, { props: headerProps({ zone: "UTC", onzone }) });
     const group = screen.getByRole("group", { name: "Display timezone" });
-    await fireEvent.click(within(group).getAllByRole("button")[1]);
-    expect(onzone).toHaveBeenCalledWith("utc");
+    await fireEvent.click(within(group).getByRole("button"));
+    expect(onzone).toHaveBeenCalledWith("local");
+  });
+
+  it("reports picking a zone, and remembers it as the alternate", async () => {
+    const onzone = vi.fn();
+    const onalternatezone = vi.fn();
+    render(Header, { props: headerProps({ onzone, onalternatezone }) });
+    await fireEvent.change(screen.getByLabelText("Show the calendar in another timezone"), {
+      target: { value: "Asia/Tokyo" },
+    });
+    expect(onalternatezone).toHaveBeenCalledWith("Asia/Tokyo");
+    expect(onzone).toHaveBeenCalledWith("Asia/Tokyo");
   });
 
   it("has a help button that reports being pressed", async () => {

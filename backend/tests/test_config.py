@@ -86,11 +86,19 @@ def test_default_display_zone_defaults_to_local() -> None:
     assert config_module.from_dict({}).app.default_display_zone == "local"
 
 
-def test_default_display_zone_can_be_utc() -> None:
+def test_the_old_lowercase_utc_spelling_still_works() -> None:
+    # The two-way local/UTC switch used to store it this way.
     cfg = config_module.from_dict({"app": {"default_display_zone": "utc"}})
-    assert cfg.app.default_display_zone == "utc"
+    assert cfg.app.default_display_zone == "UTC"
 
 
-def test_an_unknown_display_zone_is_rejected() -> None:
+@pytest.mark.parametrize("zone", ["UTC", "Europe/Berlin", "Asia/Tokyo", "America/New_York"])
+def test_any_iana_zone_can_be_the_opening_clock(zone: str) -> None:
+    cfg = config_module.from_dict({"app": {"default_display_zone": zone}})
+    assert cfg.app.default_display_zone == zone
+
+
+@pytest.mark.parametrize("zone", ["Mars/Olympus", "Not A Zone", "../../etc/passwd"])
+def test_an_unknown_display_zone_is_rejected(zone: str) -> None:
     with pytest.raises(ValueError, match="default_display_zone"):
-        config_module.from_dict({"app": {"default_display_zone": "Europe/Berlin"}})
+        config_module.from_dict({"app": {"default_display_zone": zone}})

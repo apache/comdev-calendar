@@ -3,7 +3,7 @@
   import { WEEKDAY_NAMES, dayKey, formatTime, isToday, isWeekend, weekDays } from "../lib/dates";
   import { allDayEvents, eventHue, eventStart, layoutDay } from "../lib/events";
   import type { DisplayZone } from "../lib/timezone";
-  import { nowInZone } from "../lib/timezone";
+  import { hourLabels, nowInZone, shortZoneLabel, zoneLabel, resolveZone } from "../lib/timezone";
   import EventChip from "./EventChip.svelte";
 
   interface Props {
@@ -12,24 +12,53 @@
     /** One day for the day view, seven for the week view. */
     days?: number;
     zone?: DisplayZone;
+    /** Extra clocks to show beside the grid, left of the primary one. */
+    compareZones?: DisplayZone[];
     onselect: (event: CalendarEvent) => void;
     onpickday: (day: Date) => void;
   }
 
-  let { cursor, events, days = 7, zone = "local", onselect, onpickday }: Props = $props();
+  let {
+    cursor,
+    events,
+    days = 7,
+    zone = "local",
+    compareZones = [],
+    onselect,
+    onpickday,
+  }: Props = $props();
 
   const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
   let now = $derived(nowInZone(zone));
+
   let columns = $derived(days === 1 ? [new Date(cursor)] : weekDays(cursor));
   let allDayRows = $derived(columns.map((day) => allDayEvents(events, day, zone)));
   let hasAllDay = $derived(allDayRows.some((row) => row.length > 0));
   let laidOut = $derived(columns.map((day) => layoutDay(events, day, zone)));
+  // The primary zone sits closest to the grid, since that is the one the rows
+  // actually line up with; comparison clocks go to its left.
+  let gutters = $derived([...compareZones, zone]);
+  let labels = $derived(
+    gutters.map((other) =>
+      other === zone
+        ? HOURS.map((hour) => `${String(hour).padStart(2, "0")}:00`)
+        : hourLabels(columns[0], zone, other),
+    ),
+  );
 </script>
 
-<div class="week" class:single={columns.length === 1} style="--cols: {columns.length}">
+<div
+  class="week"
+  class:single={columns.length === 1}
+  style="--cols: {columns.length}; --gutters: {gutters.length}"
+>
   <div class="headers">
-    <div class="gutter"></div>
+    {#each gutters as other, index (index)}
+      <div class="gutter zonehead" title={zoneLabel(resolveZone(other))}>
+        {shortZoneLabel(other)}
+      </div>
+    {/each}
     {#each columns as day, index (dayKey(day))}
       <button
         type="button"
@@ -49,7 +78,9 @@
 
   {#if hasAllDay}
     <div class="allday">
-      <div class="gutter"><span>All day</span></div>
+      {#each gutters as _other, index (index)}
+        <div class="gutter"><span>{index === gutters.length - 1 ? "All day" : ""}</span></div>
+      {/each}
       {#each columns as day, index (dayKey(day))}
         <div class="allday-cell" class:weekend={isWeekend(day)}>
           {#each allDayRows[index] as event (event.id)}
@@ -62,11 +93,13 @@
 
   <div class="scroll">
     <div class="body">
-      <div class="gutter hours">
-        {#each HOURS as hour (hour)}
-          <div class="hour"><span>{String(hour).padStart(2, "0")}:00</span></div>
-        {/each}
-      </div>
+      {#each gutters as _other, index (index)}
+        <div class="gutter hours" class:secondary={index < gutters.length - 1}>
+          {#each labels[index] as label, hour (hour)}
+            <div class="hour"><span>{label}</span></div>
+          {/each}
+        </div>
+      {/each}
 
       {#each columns as day, index (dayKey(day))}
         <div class="daycol" class:weekend={isWeekend(day)} class:today={isToday(day, now)}>
@@ -109,7 +142,7 @@
   .allday,
   .body {
     display: grid;
-    grid-template-columns: 3.5rem repeat(var(--cols, 7), minmax(0, 1fr));
+    grid-template-columns: repeat(var(--gutters, 1), 3.5rem) repeat(var(--cols, 7), minmax(0, 1fr));
   }
 
   .headers {
@@ -184,6 +217,28 @@
     color: var(--text-faint);
     text-align: right;
     padding-right: 0.4rem;
+  }
+
+  .zonehead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding-bottom: 0.45rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    overflow: hidden;
+  }
+
+  /* Comparison clocks are there for reference, so they read quieter than the
+     zone the grid is actually drawn in. */
+  .hours.secondary {
+    color: var(--text-faint);
+    opacity: 0.75;
+  }
+
+  .hours.secondary + .hours {
+    border-left: 1px solid var(--border);
   }
 
   .allday .gutter {

@@ -6,7 +6,15 @@
   import { applyFilters, defaultFilters, projectsInPlay, sortEvents } from "./lib/filters";
   import { canCreateAnything, canEdit, draftFromEvent, newDraft } from "./lib/drafts";
   import type { DisplayZone } from "./lib/timezone";
-  import { fromWall, nowInZone, toWall } from "./lib/timezone";
+  import {
+    LOCAL,
+    UTC,
+    fromWall,
+    normaliseZone,
+    nowInZone,
+    toWall,
+    uniqueZones,
+  } from "./lib/timezone";
   import { appPath, withoutBase } from "./lib/base";
 
   import Header from "./components/Header.svelte";
@@ -20,6 +28,10 @@
 
   const VIEW_STORAGE_KEY = "asf-calendar-view";
   const ZONE_STORAGE_KEY = "asf-calendar-zone";
+  const ALT_ZONE_STORAGE_KEY = "asf-calendar-alt-zone";
+  const COMPARE_ZONES_STORAGE_KEY = "asf-calendar-compare-zones";
+  /** More than three extra clocks and the week grid has no room left for days. */
+  const MAX_COMPARE_ZONES = 3;
   const SHORTLINK_PATTERN = /^\/e\/([A-Za-z0-9]+)\/?$/;
   const HELP_PATH = "/help";
 
@@ -50,17 +62,35 @@
   }
 
   function initialZone(): DisplayZone {
-    return stored(ZONE_STORAGE_KEY) === "utc" ? "utc" : "local";
+    return normaliseZone(stored(ZONE_STORAGE_KEY), LOCAL);
+  }
+
+  /** The zone the picker is parked on. UTC until the visitor picks another. */
+  function initialAlternateZone(): DisplayZone {
+    const saved = normaliseZone(stored(ALT_ZONE_STORAGE_KEY), UTC);
+    return saved === LOCAL ? UTC : saved;
+  }
+
+  function initialCompareZones(): DisplayZone[] {
+    const saved = stored(COMPARE_ZONES_STORAGE_KEY);
+    if (!saved) return [];
+    return uniqueZones(
+      saved
+        .split(",")
+        .map((name) => normaliseZone(name, ""))
+        .filter((name): name is DisplayZone => Boolean(name)),
+    ).slice(0, MAX_COMPARE_ZONES);
   }
 
   /** True once the visitor has expressed a preference of their own. */
   function hasChosenZone(): boolean {
-    const saved = stored(ZONE_STORAGE_KEY);
-    return saved === "utc" || saved === "local";
+    return Boolean(stored(ZONE_STORAGE_KEY));
   }
 
   let view = $state<ViewName>(initialView());
   let zone = $state<DisplayZone>(initialZone());
+  let alternateZone = $state<DisplayZone>(initialAlternateZone());
+  let compareZones = $state<DisplayZone[]>(initialCompareZones());
   // The cursor is a wall date: its local getters read as the display zone.
   let cursor = $state<Date>(startOfDay(nowInZone(initialZone())));
   let helpOpen = $state<boolean>(routePath() === HELP_PATH);
@@ -104,7 +134,7 @@
       filters = defaultFilters(cals);
       // The deployment can say which clock to open on; the visitor's own
       // choice, once made, always wins.
-      if (!hasChosenZone() && cals.default_display_zone === "utc") zone = "utc";
+      if (!hasChosenZone()) zone = normaliseZone(cals.default_display_zone, zone);
     } catch (error) {
       loadError = error instanceof ApiError ? error.message : String(error);
     }
@@ -142,6 +172,14 @@
 
   $effect(() => {
     remember(ZONE_STORAGE_KEY, zone);
+  });
+
+  $effect(() => {
+    remember(ALT_ZONE_STORAGE_KEY, alternateZone);
+  });
+
+  $effect(() => {
+    remember(COMPARE_ZONES_STORAGE_KEY, compareZones.join(","));
   });
 
 
@@ -269,6 +307,12 @@
    */
   function setZone(next: DisplayZone) {
     zone = next;
+    // A clock cannot usefully be compared against itself.
+    compareZones = uniqueZones(compareZones, next);
+  }
+
+  function setCompareZones(next: DisplayZone[]) {
+    compareZones = uniqueZones(next, zone).slice(0, MAX_COMPARE_ZONES);
   }
 
   function toggleHelp() {
@@ -286,6 +330,7 @@
     {loading}
     canCreate={canCreateAnything(calendars)}
     {zone}
+    {alternateZone}
     {helpOpen}
     onview={(next) => {
       view = next;
@@ -296,6 +341,7 @@
     oncreate={() => startCreate(cursor)}
     ontogglefilters={() => (showFilters = !showFilters)}
     onzone={setZone}
+    onalternatezone={(next) => (alternateZone = next)}
     onhelp={toggleHelp}
   />
 
@@ -308,7 +354,7 @@
 
   <div class="body">
     {#if helpOpen}
-      <HelpPage {calendars} {session} {zone} onclose={toggleHelp} />
+      <HelpPage {calendars} {session} {zone} {compareZones} onclose={toggleHelp} />
     {:else}
       {#if showFilters}
         <FilterPanel
@@ -317,7 +363,11 @@
           projects={knownProjects}
           {view}
           {feedUrl}
+          {zone}
+          {compareZones}
+          maxCompareZones={MAX_COMPARE_ZONES}
           onchange={(next) => (filters = next)}
+          oncomparezones={setCompareZones}
         />
       {/if}
 
@@ -325,13 +375,28 @@
         {#if view === "month"}
           <MonthView {cursor} events={visible} {zone} onselect={selectEvent} onpickday={goToDay} />
         {:else if view === "week"}
-          <WeekView {cursor} events={visible} {zone} onselect={selectEvent} onpickday={goToDay} />
+          <WeekView
+            {cursor}
+            events={visible}
+            {zone}
+            {compareZones}
+            onselect={selectEvent}
+            onpickday={goToDay}
+          />
         {:else if view === "day"}
-          <WeekView {cursor} events={visible} {zone} days={1} onselect={selectEvent} onpickday={goToDay} />
+          <WeekView
+            {cursor}
+            events={visible}
+            {zone}
+            {compareZones}
+            days={1}
+            onselect={selectEvent}
+            onpickday={goToDay}
+          />
         {:else if view === "year"}
           <YearView {cursor} events={visible} {zone} onpickday={goToDay} onpickmonth={goToMonth} />
         {:else}
-          <AgendaView events={visible} {zone} onselect={selectEvent} />
+          <AgendaView events={visible} {zone} {compareZones} onselect={selectEvent} />
         {/if}
       </main>
     {/if}
@@ -347,6 +412,7 @@
     error={dialogError}
     {editable}
     {zone}
+    {compareZones}
     onclose={closeDialog}
     onedit={startEdit}
     onsave={save}

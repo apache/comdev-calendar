@@ -1,17 +1,19 @@
 <script lang="ts">
   import type { Calendars, SessionInfo } from "../lib/types";
   import type { DisplayZone } from "../lib/timezone";
-  import { browserZone, describeDisplayZone } from "../lib/timezone";
+  import { browserZone, describeDisplayZone, resolveZone } from "../lib/timezone";
+  import { appPath } from "../lib/base";
   import { loginUrl, logoutUrl } from "../lib/base";
 
   interface Props {
     calendars: Calendars | null;
     session: SessionInfo | null;
     zone: DisplayZone;
+    compareZones?: DisplayZone[];
     onclose: () => void;
   }
 
-  let { calendars, session, zone, onclose }: Props = $props();
+  let { calendars, session, zone, compareZones = [], onclose }: Props = $props();
 
   /** Rows of the "who can do what" table. A cell is either true, false, or a note. */
   type Cell = boolean | string;
@@ -30,6 +32,10 @@
     { what: "See private foundation events", cells: [false, false, false, true] },
     { what: "Add and edit foundation events", cells: [false, false, false, true] },
   ];
+
+  let embedExample = $derived(
+    `${globalThis.location?.origin ?? ""}${appPath("/embed/agenda")}?project=httpd&limit=8`,
+  );
 
   let youAre = $derived.by(() => {
     if (!calendars?.authenticated) return "You are browsing anonymously, so you can see public events only.";
@@ -176,12 +182,24 @@
       </p>
       <ul>
         <li>
-          The switch at the top of the page chooses the clock <em>you</em> read the calendar by:
-          your browser's own timezone (currently
-          <strong>{browserZone()}</strong>, {describeDisplayZone("local")}) or
-          <strong>UTC</strong>. It is currently set to <strong>{zone === "utc" ? "UTC" : "your local timezone"}</strong>.
-          Everything moves together when you flip it: the grid, the times on each event, and which
-          day an event lands on.
+          The switch at the top of the page chooses the clock the calendar is <em>drawn</em> in.
+          <strong>Local</strong> follows your browser, which right now says
+          <strong>{browserZone()}</strong> - {describeDisplayZone("local")} - and the picker beside
+          it holds any of the major timezones, starting on UTC. It is currently set to
+          <strong>{describeDisplayZone(zone)}</strong>. Flipping it moves everything together: the
+          grid, the times on each event, and which day an event falls on.
+        </li>
+        <li>
+          <strong>You can watch more than one clock at once.</strong> Under "Timezones" in the panel
+          on the left, add up to three comparison timezones. They appear as extra hour columns beside
+          the week and day grids, after the time on each agenda row, and in an event's details - so
+          you can see an event in the organiser's own time and in yours without doing the arithmetic.
+          {#if compareZones.length > 0}
+            You are currently comparing against
+            <strong>{compareZones.map((other) => resolveZone(other)).join(", ")}</strong>.
+          {/if}
+          The grid itself can only be drawn on one clock, so the extra ones are labels rather than
+          extra columns of events.
         </li>
         <li>
           When you add an event you also choose the timezone the times are <em>in</em>. If you are
@@ -190,7 +208,9 @@
           clock reading and moves the moment, which is almost always what you meant.
         </li>
         <li>
-          When an event's own timezone differs from the one you are reading in, its details show both.
+          Zone names such as <code>Europe/Copenhagen</code> are how the timezone database identifies
+          a clock, not a guess about where you are sitting. The calendar shows the city and the
+          current offset together so it is obvious why a particular clock was chosen.
         </li>
         <li>
           <strong>All-day events are dates, not moments.</strong> An all-day event on 14 March is on
@@ -241,6 +261,20 @@
           currently in view, filters and all.
         </li>
       </ul>
+    </section>
+
+    <section>
+      <h3>Putting the agenda on your own site</h3>
+      <p>
+        A project website can carry a live list of its upcoming events with an iframe. No script and
+        no account are needed, and it stays up to date on its own.
+      </p>
+      <pre>&lt;iframe src="{embedExample}" width="100%" height="420"&gt;&lt;/iframe&gt;</pre>
+      <p class="muted small">
+        An embed always shows public events only, whoever is looking at it. Your session does not
+        travel to another site, which is exactly what you want. The project README lists the
+        parameters it takes and the headers a deployment needs.
+      </p>
     </section>
 
     <section>
@@ -413,6 +447,15 @@
 
   .small {
     font-size: 12px;
+  }
+
+  pre {
+    margin: 0.4rem 0;
+    padding: 0.5rem 0.7rem;
+    background: var(--bg-subtle);
+    border-radius: var(--radius);
+    font-size: 11px;
+    overflow-x: auto;
   }
 
   footer {

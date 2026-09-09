@@ -12,6 +12,7 @@ import dataclasses
 import pathlib
 import re
 import urllib.parse
+import zoneinfo
 from typing import Any
 
 import yaml
@@ -45,15 +46,35 @@ class AppConfig:
     title: str = "ASF Community Calendar"
     # Directory holding the built Svelte frontend (vite build output).
     frontend_dist: str = "frontend/dist"
-    # Which clock the calendar opens on for a visitor who has not chosen:
-    # "local" for the browser's own timezone, "utc" for UTC. Individual
-    # visitors can flip the switch and their choice is remembered.
+    # Which clock the calendar opens on for a visitor who has not chosen one:
+    # "local" for the browser's own timezone, or any IANA zone name such as
+    # "UTC" or "Europe/Berlin". Visitors can change it and their choice is
+    # remembered in their browser.
     default_display_zone: str = "local"
     # Path prefix for event shortlinks, e.g. /e/AbCd1234
     shortlink_prefix: str = "/e"
 
 
-DISPLAY_ZONES = ("local", "utc")
+LOCAL_ZONE = "local"
+
+
+def normalise_display_zone(value: str) -> str:
+    """Tidies the configured opening clock into "local" or an IANA name.
+
+    The lowercase "utc" the two-way switch used to take is still accepted, so
+    an existing config keeps working.
+    """
+    text = (value or "").strip()
+    if not text or text.lower() == LOCAL_ZONE:
+        return LOCAL_ZONE
+    if text.lower() == "utc":
+        return "UTC"
+    try:
+        zoneinfo.ZoneInfo(text)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+        raise ValueError(f"app.default_display_zone must be 'local' or an IANA timezone name, not {value!r}") from exc
+    return text
+
 
 # A mount point is one or more path segments of unreserved URL characters.
 BASE_PATH_RE = re.compile(r"^(/[A-Za-z0-9._~-]+)+$")
@@ -149,9 +170,10 @@ def from_dict(raw: dict[str, Any] | None, root_dir: pathlib.Path | None = None) 
         server_raw["base_path"] = normalise_base_path(str(server_raw["base_path"]))
     server = ServerConfig(**server_raw)
     database = DatabaseConfig(**_pick(_section(raw, "database"), DatabaseConfig.__annotations__))
-    app = AppConfig(**_pick(_section(raw, "app"), AppConfig.__annotations__))
-    if app.default_display_zone not in DISPLAY_ZONES:
-        raise ValueError(f"app.default_display_zone must be one of {', '.join(DISPLAY_ZONES)}")
+    app_raw = _pick(_section(raw, "app"), AppConfig.__annotations__)
+    if "default_display_zone" in app_raw:
+        app_raw["default_display_zone"] = normalise_display_zone(str(app_raw["default_display_zone"]))
+    app = AppConfig(**app_raw)
     oauth = _section(raw, "oauth")
     return Config(
         server=server,

@@ -6,8 +6,11 @@
   import {
     describeDisplayZone,
     fromWallInZone,
+    isLocal,
+    resolveZone,
     toWallInZone,
-    zoneAbbreviation,
+    zoneCity,
+    zoneLabel,
     zoneList,
   } from "../lib/timezone";
   import { api } from "../lib/api";
@@ -22,6 +25,8 @@
     editable: boolean;
     /** The timezone the viewer is reading the calendar in. */
     zone?: DisplayZone;
+    /** Extra clocks the viewer has asked to see alongside. */
+    compareZones?: DisplayZone[];
     onclose: () => void;
     onedit: () => void;
     onsave: (draft: EventDraft) => void;
@@ -36,6 +41,7 @@
     error,
     editable,
     zone = "local",
+    compareZones = [],
     onclose,
     onedit,
     onsave,
@@ -122,23 +128,48 @@
     return `${formatDate(start)} ${formatTime(start)} - ${formatDate(end)} ${formatTime(end)}`;
   }
 
-  /** The same times as the organiser entered them, when that differs. */
-  function organiserLabel(current: CalendarEvent): string | null {
-    if (current.all_day || !current.timezone || current.timezone === "UTC") {
-      if (current.all_day) return null;
-      if (zone === "utc") return null;
-    }
-    const instant = new Date(current.start);
-    const theirStart = toWallInZone(instant, current.timezone || "UTC");
-    const theirEnd = toWallInZone(new Date(current.end), current.timezone || "UTC");
-    const mine = eventStart(current, zone);
-    // Nothing to add if the organiser's clock reads the same as the viewer's.
-    if (theirStart.getTime() === mine.getTime()) return null;
-    return `${formatTime(theirStart)} - ${formatTime(theirEnd)} ${current.timezone} (${zoneAbbreviation(
-      instant,
-      current.timezone || "UTC",
-    )})`;
+  interface ZoneReading {
+    key: string;
+    label: string;
+    when: string;
   }
+
+  /**
+   * The same event on other clocks: the organiser's own, and whichever zones
+   * the viewer has asked to compare against.
+   *
+   * All-day events are dates rather than instants, so there is nothing to
+   * convert and the list stays empty.
+   */
+  let otherReadings = $derived.by((): ZoneReading[] => {
+    const current = event;
+    if (!current || current.all_day) return [];
+
+    const start = new Date(current.start);
+    const end = new Date(current.end);
+    const primary = eventStart(current, zone).getTime();
+    const rows: ZoneReading[] = [];
+    const seen = new Set<string>([resolveZone(zone)]);
+
+    const add = (candidate: DisplayZone, suffix = "") => {
+      const resolved = resolveZone(candidate);
+      if (seen.has(resolved)) return;
+      seen.add(resolved);
+      const from = toWallInZone(start, resolved);
+      // A zone that happens to read the same as the viewer's is just noise.
+      if (from.getTime() === primary && !suffix) return;
+      const name = isLocal(candidate) ? `Local - ${zoneCity(resolved)}` : zoneCity(resolved);
+      rows.push({
+        key: resolved,
+        label: `${name}${suffix}`,
+        when: `${formatTime(from)} - ${formatTime(toWallInZone(end, resolved))}`,
+      });
+    };
+
+    add(current.timezone || "UTC", " (organiser)");
+    for (const candidate of compareZones) add(candidate);
+    return rows;
+  });
 
   /**
    * The form's times are entered in the event's own timezone, so that posting
@@ -365,8 +396,15 @@
           <span class="zonehint muted">{event.all_day ? "" : describeDisplayZone(zone)}</span>
         </p>
 
-        {#if organiserLabel(event)}
-          <p class="muted organiser">Entered by the organiser as {organiserLabel(event)}</p>
+        {#if otherReadings.length > 0}
+          <ul class="clocks">
+            {#each otherReadings as reading (reading.key)}
+              <li>
+                <span class="clockzone" title={zoneLabel(reading.key)}>{reading.label}</span>
+                <span class="clocktime">{reading.when}</span>
+              </li>
+            {/each}
+          </ul>
         {/if}
 
         {#if event.location}
@@ -519,9 +557,25 @@
     font-size: 12px;
   }
 
-  .organiser {
-    margin-bottom: 0.8rem;
+  .clocks {
+    list-style: none;
+    margin: 0 0 0.8rem;
+    padding: 0;
     font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .clocks li {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .clockzone {
+    min-width: 11rem;
+  }
+
+  .clocktime {
+    font-variant-numeric: tabular-nums;
   }
 
   .hint {

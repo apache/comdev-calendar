@@ -72,6 +72,15 @@ body {
   height: 100%;
 }
 
+/* The embed is sized by its content, so the host page can fit an iframe to it
+   rather than scrolling inside a fixed box. */
+.embedded,
+.embedded body,
+.embedded #app {
+  height: auto;
+  background: transparent;
+}
+
 button {
   font: inherit;
   color: inherit;

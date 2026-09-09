@@ -271,20 +271,26 @@ describe("timezones in the details", () => {
     end: "2026-07-10T14:00:00Z",
   });
 
+  function clocks(container: HTMLElement): string[] {
+    return [...container.querySelectorAll(".clocks li")].map((row) =>
+      (row.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+  }
+
   it("shows the viewer's clock as the headline", () => {
-    render(EventDialog, { props: props({ event: berlinEvent, zone: "utc" }) });
+    render(EventDialog, { props: props({ event: berlinEvent, zone: "UTC" }) });
     expect(screen.getByText(/10 July 2026, 13:00 - 14:00/)).toBeInTheDocument();
   });
 
   it("adds the organiser's own clock when it differs", () => {
-    render(EventDialog, { props: props({ event: berlinEvent, zone: "utc" }) });
-    expect(screen.getByText(/Entered by the organiser as 15:00 - 16:00 Europe\/Berlin/)).toBeInTheDocument();
+    const { container } = render(EventDialog, { props: props({ event: berlinEvent, zone: "UTC" }) });
+    expect(clocks(container)).toEqual(["Berlin (organiser) 15:00 - 16:00"]);
   });
 
   it("does not repeat itself when the clocks agree", () => {
     const utcEvent = makeEvent({ timezone: "UTC" });
-    render(EventDialog, { props: props({ event: utcEvent, zone: "utc" }) });
-    expect(screen.queryByText(/Entered by the organiser/)).not.toBeInTheDocument();
+    const { container } = render(EventDialog, { props: props({ event: utcEvent, zone: "UTC" }) });
+    expect(clocks(container)).toEqual([]);
   });
 
   it("says nothing about zones for an all-day event", () => {
@@ -294,7 +300,42 @@ describe("timezones in the details", () => {
       end: "2026-07-11T00:00:00Z",
       timezone: "UTC",
     });
-    render(EventDialog, { props: props({ event: allDay, zone: "utc" }) });
-    expect(screen.queryByText(/Entered by the organiser/)).not.toBeInTheDocument();
+    const { container } = render(EventDialog, { props: props({ event: allDay, zone: "UTC" }) });
+    expect(clocks(container)).toEqual([]);
+  });
+
+  it("lists every comparison clock the viewer has asked for", () => {
+    const { container } = render(
+      EventDialog,
+      {
+        props: props({
+          event: berlinEvent,
+          zone: "UTC",
+          compareZones: ["Asia/Tokyo", "America/New_York"],
+        }),
+      },
+    );
+    expect(clocks(container)).toEqual([
+      "Berlin (organiser) 15:00 - 16:00",
+      "Tokyo 22:00 - 23:00",
+      "New York 09:00 - 10:00",
+    ]);
+  });
+
+  it("does not list a comparison clock that is already the organiser's", () => {
+    const { container } = render(
+      EventDialog,
+      { props: props({ event: berlinEvent, zone: "UTC", compareZones: ["Europe/Berlin"] }) },
+    );
+    expect(clocks(container)).toEqual(["Berlin (organiser) 15:00 - 16:00"]);
+  });
+
+  it("names the local clock as local", () => {
+    const { container } = render(
+      EventDialog,
+      { props: props({ event: berlinEvent, zone: "Asia/Tokyo", compareZones: ["local"] }) },
+    );
+    // The suite runs in UTC, so "local" reads 13:00.
+    expect(clocks(container)).toContain("Local - UTC 13:00 - 14:00");
   });
 });

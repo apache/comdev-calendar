@@ -159,6 +159,14 @@ class TestRoutes:
         assert response.status_code == 200
         assert "<div id=app>" in (await response.get_data()).decode()
 
+    async def test_the_embeddable_agenda_moves_too(self, mounted_client: Any, mounted_dist: pathlib.Path) -> None:
+        response = await mounted_client.get(f"{MOUNT}/embed/agenda?project=httpd")
+        assert response.status_code == 200
+        body = (await response.get_data()).decode()
+        assert "<div id=app>" in body
+        # The embed builds its API calls from this, so it has to be right.
+        assert '<base href="/calendar/">' in body
+
     async def test_the_oauth_endpoint_moves_too(self, mounted_client: Any) -> None:
         response = await mounted_client.get(f"{MOUNT}/auth?login={MOUNT}/")
         assert response.status_code == 302

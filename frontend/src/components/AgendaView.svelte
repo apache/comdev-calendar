@@ -3,15 +3,17 @@
   import { WEEKDAY_NAMES, formatDate, formatTime, isToday } from "../lib/dates";
   import { agendaSections, calendarLabel, eventEnd, eventHue, eventStart } from "../lib/events";
   import type { DisplayZone } from "../lib/timezone";
-  import { nowInZone } from "../lib/timezone";
+  import { nowInZone, shortZoneLabel } from "../lib/timezone";
 
   interface Props {
     events: CalendarEvent[];
     zone?: DisplayZone;
+    /** Extra clocks to show after the main time. */
+    compareZones?: DisplayZone[];
     onselect: (event: CalendarEvent) => void;
   }
 
-  let { events, zone = "local", onselect }: Props = $props();
+  let { events, zone = "local", compareZones = [], onselect }: Props = $props();
 
   let now = $derived(nowInZone(zone));
   let sections = $derived(agendaSections(events, zone));
@@ -19,6 +21,15 @@
   function when(event: CalendarEvent): string {
     if (event.all_day) return "All day";
     return `${formatTime(eventStart(event, zone))} - ${formatTime(eventEnd(event, zone))}`;
+  }
+
+  /** The start time on each comparison clock, for the muted suffix. */
+  function alsoAt(event: CalendarEvent): { key: string; text: string }[] {
+    if (event.all_day) return [];
+    return compareZones.map((other) => ({
+      key: other,
+      text: `${formatTime(eventStart(event, other))} ${shortZoneLabel(other)}`,
+    }));
   }
 </script>
 
@@ -43,6 +54,9 @@
               onclick={() => onselect(event)}
             >
               <span class="when">{when(event)}</span>
+              {#each alsoAt(event) as also (also.key)}
+                <span class="alsoat">{also.text}</span>
+              {/each}
               <span class="title">{event.title}</span>
               <span class="tag">{calendarLabel(event)}</span>
               {#if event.visibility === "private"}
@@ -135,6 +149,14 @@
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .alsoat {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 

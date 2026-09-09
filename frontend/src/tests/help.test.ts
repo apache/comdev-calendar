@@ -12,7 +12,8 @@ function props(overrides: Record<string, unknown> = {}) {
   return {
     calendars: makeCalendars(),
     session: { authenticated: true, uid: "alice", logout_url: "/auth?logout=/" },
-    zone: "local" as const,
+    zone: "local",
+    compareZones: [] as string[],
     onclose: noop,
     ...overrides,
   };
@@ -105,14 +106,26 @@ describe("what it says about you", () => {
   });
 
   it("says which timezone setting is in force", () => {
-    const { container } = render(HelpPage, { props: props({ zone: "utc" }) });
-    expect(container.querySelector("#timezones")).toHaveTextContent("It is currently set to UTC");
+    const { container } = render(HelpPage, { props: props({ zone: "Asia/Tokyo" }) });
+    expect(container.querySelector("#timezones")).toHaveTextContent(
+      "It is currently set to Tokyo (UTC+09:00)",
+    );
   });
 
-  it("and says so for local too", () => {
-    const { container } = render(HelpPage, { props: props({ zone: "local" }) });
+  it("explains the comparison timezones", () => {
+    const { container } = render(HelpPage, { props: props() });
     expect(container.querySelector("#timezones")).toHaveTextContent(
-      "It is currently set to your local timezone",
+      "You can watch more than one clock at once",
+    );
+  });
+
+  it("names the comparison timezones in use", () => {
+    const { container } = render(
+      HelpPage,
+      { props: props({ compareZones: ["Asia/Tokyo", "Europe/Berlin"] }) },
+    );
+    expect(container.querySelector("#timezones")).toHaveTextContent(
+      "You are currently comparing against Asia/Tokyo, Europe/Berlin",
     );
   });
 });

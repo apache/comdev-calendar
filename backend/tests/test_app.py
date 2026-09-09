@@ -108,6 +108,33 @@ class TestStaticServing:
         assert response.headers["Content-Type"].startswith("application/json")
 
 
+class TestEmbedRoute:
+    """The embeddable agenda is a client-side route like any other, but it is
+    the one external sites depend on, so it gets its own check."""
+
+    async def test_it_serves_the_app(self, client: Any, dist_dir: pathlib.Path) -> None:
+        response = await client.get("/embed/agenda")
+        assert response.status_code == 200
+        assert "<div id=app>" in (await response.get_data()).decode()
+
+    async def test_query_parameters_do_not_change_that(self, client: Any, dist_dir: pathlib.Path) -> None:
+        response = await client.get("/embed/agenda?project=httpd&limit=5&title=Upcoming")
+        assert response.status_code == 200
+
+    async def test_it_works_anonymously(self, client: Any, dist_dir: pathlib.Path) -> None:
+        # An embed on someone else's site never carries a session cookie, so
+        # the route must not be behind a login.
+        assert (await client.get("/embed/agenda")).status_code == 200
+
+    async def test_the_app_does_not_forbid_framing_itself(self, client: Any, dist_dir: pathlib.Path) -> None:
+        # Whether framing is allowed is the deployment's call, made with
+        # Content-Security-Policy in the reverse proxy. The app must not
+        # quietly rule it out.
+        response = await client.get("/embed/agenda")
+        assert "X-Frame-Options" not in response.headers
+        assert "Content-Security-Policy" not in response.headers
+
+
 class TestShortlinkPage:
     async def _create(self, client: Any, login: Any, **fields: Any) -> dict[str, Any]:
         await login("carol")
