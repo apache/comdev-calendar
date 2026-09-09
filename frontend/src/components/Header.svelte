@@ -22,6 +22,7 @@
     onstep: (direction: number) => void;
     ontoday: () => void;
     oncreate: () => void;
+    onimport: () => void;
     ontogglefilters: () => void;
     onzone: (zone: DisplayZone) => void;
     onalternatezone: (zone: DisplayZone) => void;
@@ -44,6 +45,7 @@
     onstep,
     ontoday,
     oncreate,
+    onimport,
     ontogglefilters,
     onzone,
     onalternatezone,
@@ -98,6 +100,9 @@
       API
     </button>
     {#if canCreate}
+      <button type="button" class="btn" onclick={onimport} title="Import events from an .ics file">
+        Import
+      </button>
       <button type="button" class="btn primary" onclick={oncreate}>New event</button>
     {/if}
     {#if session?.authenticated}

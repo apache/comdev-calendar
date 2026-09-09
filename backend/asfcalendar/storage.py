@@ -160,7 +160,17 @@ class Storage:
         if not owner:
             raise ValueError("An event needs an owner")
         stamp = int(now if now is not None else time.time())
-        # Retry on the astronomically unlikely shortlink collision.
+        event_id = await self._insert(data, owner, stamp)
+        await self.db.commit()
+        created = await self.get(event_id)
+        assert created is not None
+        return created
+
+    async def _insert(self, data: EventInput, owner: str, stamp: int) -> int:
+        """Writes one row and returns its id, without committing.
+
+        Retries on the astronomically unlikely shortlink collision.
+        """
         for _attempt in range(8):
             token = shortlink.generate()
             try:
@@ -191,11 +201,37 @@ class Storage:
                 )
             except aiosqlite.IntegrityError:
                 continue
-            await self.db.commit()
-            created = await self.get(int(cursor.lastrowid or 0))
-            assert created is not None
-            return created
+            return int(cursor.lastrowid or 0)
         raise RuntimeError("Could not allocate a unique shortlink")
+
+    async def create_many(self, data: Sequence[EventInput], owner: str, *, now: int | None = None) -> list[Event]:
+        """Inserts several events in one transaction.
+
+        An import either lands completely or not at all: if any row fails, the
+        whole batch is rolled back rather than leaving somebody to work out
+        which half of their calendar arrived.
+        """
+        if not owner:
+            raise ValueError("An event needs an owner")
+        if not data:
+            return []
+
+        stamp = int(now if now is not None else time.time())
+        created_ids: list[int] = []
+        try:
+            for entry in data:
+                created_ids.append(await self._insert(entry, owner, stamp))
+        except Exception:
+            await self.db.rollback()
+            raise
+        await self.db.commit()
+
+        created: list[Event] = []
+        for event_id in created_ids:
+            event = await self.get(event_id)
+            assert event is not None
+            created.append(event)
+        return created
 
     async def get(self, event_id: int) -> Event | None:
         async with self.db.execute("SELECT * FROM events WHERE id = ?", (event_id,)) as cursor:

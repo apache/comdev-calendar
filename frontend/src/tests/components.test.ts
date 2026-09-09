@@ -338,6 +338,7 @@ describe("Header", () => {
       onstep: noop,
       ontoday: noop,
       oncreate: noop,
+      onimport: noop,
       ontogglefilters: noop,
       onzone: noop,
       onalternatezone: noop,

@@ -26,6 +26,7 @@
   import EventDialog from "./components/EventDialog.svelte";
   import HelpPage from "./components/HelpPage.svelte";
   import ApiDocs from "./components/ApiDocs.svelte";
+  import ImportDialog from "./components/ImportDialog.svelte";
 
   const VIEW_STORAGE_KEY = "asf-calendar-view";
   const ZONE_STORAGE_KEY = "asf-calendar-zone";
@@ -110,6 +111,7 @@
 
   let selected = $state<CalendarEvent | null>(null);
   let draft = $state<EventDraft | null>(null);
+  let importing = $state(false);
 
   let range = $derived(rangeForView(view, cursor));
   let knownProjects = $derived(projectsInPlay(events, calendars));
@@ -260,6 +262,23 @@
     draft = newDraft(fromWall(when, zone), calendars);
   }
 
+  function startImport() {
+    selected = null;
+    draft = null;
+    dialogError = null;
+    helpOpen = false;
+    docsOpen = false;
+    importing = true;
+  }
+
+  async function finishImport(count: number) {
+    importing = false;
+    // The imported events may be anywhere in time, so reload the window rather
+    // than trying to splice them in.
+    await loadEvents(fromWall(range.start, zone), fromWall(range.end, zone));
+    loadError = count === 0 ? "Nothing was imported." : null;
+  }
+
   function startEdit() {
     if (selected) draft = draftFromEvent(selected);
   }
@@ -353,6 +372,7 @@
     onstep={(direction) => (cursor = step(view, cursor, direction))}
     ontoday={() => (cursor = startOfDay(nowInZone(zone)))}
     oncreate={() => startCreate(cursor)}
+    onimport={startImport}
     ontogglefilters={() => (showFilters = !showFilters)}
     onzone={setZone}
     onalternatezone={(next) => (alternateZone = next)}
@@ -419,6 +439,15 @@
     {/if}
   </div>
 </div>
+
+{#if importing}
+  <ImportDialog
+    {calendars}
+    {zone}
+    onclose={() => (importing = false)}
+    onimported={finishImport}
+  />
+{/if}
 
 {#if selected || draft}
   <EventDialog

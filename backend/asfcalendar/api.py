@@ -16,9 +16,16 @@ import asfquart.session
 import quart
 import yaml
 
-from . import ics, openapi
+from . import ics, icsimport, openapi
 from .config import Config
-from .models import Event, ValidationError, parse_event_payload, parse_timestamp
+from .models import (
+    CATEGORIES,
+    VISIBILITIES,
+    Event,
+    ValidationError,
+    parse_event_payload,
+    parse_timestamp,
+)
 from .permissions import (
     PermissionDenied,
     SessionLike,
@@ -121,6 +128,10 @@ def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
         # can offer a login link instead of an apology.
         status = 401 if error.message == asfquart.auth.Requirements.E_NOT_LOGGED_IN else error.errorcode
         return _error(error.message, status)
+
+    @api.errorhandler(413)
+    async def _on_too_large(_exception: Any) -> quart.Response:
+        return _error(f"That upload is larger than the {icsimport.MAX_IMPORT_BYTES // 1024} KiB limit.", 413)
 
     @api.errorhandler(404)
     async def _on_404(_exception: Any) -> quart.Response:
@@ -253,6 +264,87 @@ def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
             return _error("No such event", 404)
         check_view(event, session)
         return _json({"event": dump(event)})
+
+    # ---- importing an iCalendar file ---------------------------------------
+
+    async def _uploaded_calendar() -> bytes | str:
+        """The .ics file, however it was sent.
+
+        A browser posts it as a multipart form; a script is more likely to pipe
+        the file straight into the body, so both are accepted.
+        """
+        content_type = quart.request.content_type or ""
+        if content_type.startswith("multipart/"):
+            files = await quart.request.files
+            upload = files.get("file")
+            if upload is None:
+                raise ValidationError("Attach the calendar as the 'file' part of the form.", "file")
+            return cast("bytes | str", upload.read())
+        body = await quart.request.get_data()
+        if not body:
+            raise ValidationError("The request body was empty; send an iCalendar file.", "file")
+        return body
+
+    async def _import_settings() -> tuple[str, str, str | None]:
+        """Which calendar the imported events should land in.
+
+        Taken from the form when there is one, and from the query string
+        otherwise, so a script piping a file in can still say where it goes.
+        """
+        form: Any = {}
+        if (quart.request.content_type or "").startswith("multipart/"):
+            form = await quart.request.form
+
+        def value(name: str) -> str | None:
+            return form.get(name) or quart.request.args.get(name)
+
+        category = (value("category") or "").strip()
+        if category not in CATEGORIES:
+            raise ValidationError(f"'category' is required and must be one of: {', '.join(CATEGORIES)}", "category")
+        # Personal events are forced private later; for the others this matches
+        # the default POST /api/events applies.
+        visibility = (value("visibility") or "public").strip()
+        if visibility not in VISIBILITIES:
+            raise ValidationError(f"'visibility' must be one of: {', '.join(VISIBILITIES)}", "visibility")
+        project = (value("project") or "").strip() or None
+        return category, visibility, project
+
+    @api.route("/import/preview", methods=["POST"])
+    @require_session
+    async def import_preview() -> quart.Response:
+        """Reads a file and says what it holds, without writing anything."""
+        result = icsimport.parse(await _uploaded_calendar())
+        return _json(result.to_json())
+
+    @api.route("/import", methods=["POST"])
+    @require_session
+    async def import_events() -> quart.Response:
+        session = await current_session()
+        data = await _uploaded_calendar()
+        category, visibility, project = await _import_settings()
+        result = icsimport.parse(data)
+
+        # Every candidate goes through the same validation as a hand-typed
+        # event, and all of them are checked before any of them is written.
+        payloads = [
+            parse_event_payload(candidate.to_payload(category, visibility, project))  # type: ignore[arg-type]
+            for candidate in result.candidates
+        ]
+        # They all land in the same calendar, so one permission check covers
+        # the batch.
+        check_write(payloads[0], session)
+
+        owner = uid_of(session)
+        assert owner is not None  # @require_session guarantees a session
+        created = await store.create_many(payloads, owner)
+        return _json(
+            {
+                "created": dump_all(created, session),
+                "count": len(created),
+                "warnings": result.warnings,
+            },
+            201,
+        )
 
     # ---- writing events ---------------------------------------------------
     #

@@ -45,6 +45,7 @@ access rules are built on. The frontend is Svelte 5 built with Vite.
 - [Serving from a sub-directory](#serving-from-a-sub-directory)
 - [Embedding the agenda elsewhere](#embedding-the-agenda-elsewhere)
 - [Timezones](#timezones)
+- [Importing an iCalendar file](#importing-an-icalendar-file)
 - [The API](#the-api)
 - [API documentation](#api-documentation)
 - [Project layout](#project-layout)
@@ -566,6 +567,84 @@ whichever clock is on display. Offsets for named zones come from
 `Intl.DateTimeFormat`, so daylight saving is handled by the browser's own tz
 data rather than by us.
 
+## Importing an iCalendar file
+
+A logged-in user can upload an `.ics` file and have every event in it added to
+one calendar. **Import** appears next to **New event** once you are signed in.
+
+The form works in two steps, on purpose. Choosing a file shows a preview of what
+was found, and only then does it ask which calendar the events belong to. That
+second question is not defaulted: an import can create dozens of events at once,
+and a wrong default would publish somebody's private meetings or file them under
+the wrong project. The Import button stays disabled, with a line saying what is
+still to answer, until the calendar, the visibility and (for a project import)
+the project have all been chosen.
+
+Which options are offered follows the same rules as anywhere else: a committer
+is shown their projects but not the private option, a committee member gets
+both, and the foundation calendar only appears for foundation members.
+
+### What the importer does with a file
+
+Files come from Google Calendar, Outlook, Thunderbird and hand-rolled scripts,
+so the reading is forgiving. Rather than refusing a whole upload over one
+awkward entry, it repairs what it can and says what it changed - every note
+appears in the preview before anything is saved:
+
+| In the file                              | What happens                                            |
+| ---------------------------------------- | -------------------------------------------------------- |
+| `DTSTART;TZID=Europe/Berlin`             | kept as the event's organiser timezone                    |
+| `DTSTART;VALUE=DATE`                     | an all-day event, whole UTC days                          |
+| `DURATION` instead of `DTEND`            | used to work out the end                                  |
+| no end at all                            | an hour, or a day for an all-day event                    |
+| a floating time with no zone             | read as UTC, with a note                                  |
+| a title longer than the limit            | trimmed, with a note                                      |
+| a `mailto:` or other non-http `URL`      | dropped, with a note                                      |
+| `RRULE`                                  | imported as a single occurrence, with a note              |
+| `STATUS:CANCELLED`, or no `DTSTART`      | skipped, and counted in the file's warnings               |
+| `VTODO`, `VJOURNAL`                      | ignored; only `VEVENT` is an event                        |
+
+An event that survives all that still goes through exactly the same validation
+as one typed in by hand, so nothing gets in through the importer that could not
+have been created normally. The whole import is one transaction: every event is
+validated and the permission checked before any of them is written, so a file
+either lands completely or not at all.
+
+At most 200 events and 1 MiB per file.
+
+### From a script
+
+Two endpoints, both needing a session. `POST /api/import/preview` reads a file
+and says what is in it without writing anything; `POST /api/import` does the
+import. Either takes the file as the `file` part of a multipart form, or as the
+whole request body:
+
+```shell
+# What is in this file?
+curl -s -X POST --data-binary @events.ics \
+  -H 'Content-Type: text/calendar' -H 'X-No-Redirect: 1' \
+  -b cookies.txt https://calendar.apache.org/api/import/preview | jq
+
+# Import it as public httpd events
+curl -s -X POST -b cookies.txt -H 'X-No-Redirect: 1' \
+  -F file=@events.ics -F category=project -F project=httpd -F visibility=public \
+  https://calendar.apache.org/api/import
+```
+
+When the file is the request body there is nowhere to put the form fields, so
+they go on the query string instead:
+
+```shell
+curl -s -X POST --data-binary @events.ics \
+  -H 'Content-Type: text/calendar' -H 'X-No-Redirect: 1' -b cookies.txt \
+  'https://calendar.apache.org/api/import?category=project&project=httpd'
+```
+
+`category` is required. `visibility` defaults to `public`, the same as
+`POST /api/events` - the API keeps the single-event default, and it is the form
+that insists on an explicit answer. The response carries the created events and
+any warnings.
+
 ## The API
 
 Everything under `/api` speaks JSON, errors included. Anonymous reads are
@@ -583,6 +662,8 @@ allowed; anything that writes needs a session.
 | GET               | `/api/events/<id>.ics`   | one event as iCalendar                              |
 | GET               | `/api/events.ics`        | a filtered iCalendar feed                           |
 | GET               | `/api/shortlink/<token>` | look an event up by its shortlink token             |
+| POST              | `/api/import/preview`    | read an `.ics` file without saving anything         |
+| POST              | `/api/import`            | turn an `.ics` file into events                     |
 | GET               | `/api/healthz`           | liveness check                                      |
 
 Outside `/api`, the backend serves the built frontend: `/` for the calendar,
@@ -742,6 +823,7 @@ backend/
     storage.py       SQLite, including the visibility SQL
     models.py        the Event type and payload validation
     ics.py           iCalendar output
+    icsimport.py     reading an uploaded iCalendar file
     openapi.py       the OpenAPI description, built from the real constants
     shortlink.py     shortlink tokens
     config.py        reading config.yaml
@@ -751,13 +833,14 @@ frontend/
   src/
     App.svelte       state, loading and routing
     components/      Header, TimezoneSwitch, FilterPanel, the five views,
-                     EventDialog, HelpPage, EmbedAgenda, ApiDocs
+                     EventDialog, ImportDialog, HelpPage, EmbedAgenda, ApiDocs
     lib/
       api.ts         the API client
       base.ts        the deployment's mount point, for sub-directory installs
       dates.ts       date arithmetic and grid maths
       timezone.ts    wall-clock conversions, zone naming, the zone picker
       embed.ts       options for the embeddable agenda
+      importing.ts   where uploaded events should land
       events.ts      grouping, overlap layout, colours
       filters.ts     client-side filtering and sorting
       drafts.ts      new and edited events, and a local canEdit
@@ -923,6 +1006,15 @@ session = ClientSession({"uid": "bob", "pmcs": ["httpd"], "projects": ["httpd"]}
 can_view(some_event, session)
 ```
 
+**An import says "No events could be read from that file".** Either it is not
+iCalendar, or every entry in it was skipped. Run it through
+`POST /api/import/preview`, whose `warnings` say which: entries with no
+`DTSTART`, and ones marked `STATUS:CANCELLED`, are counted there.
+
+**An imported event is an hour out.** Look at its `DTSTART` in the file. A time
+with no `Z` and no `TZID` is "floating" and is read as UTC, which the preview
+warns about; the fix is in whatever produced the file.
+
 **The API documentation page is blank, or says Swagger UI could not be loaded.**
 The vendored files are missing from the build. Run `npm run build` in
 `frontend/`, which copies them in first, and check
@@ -1010,7 +1102,8 @@ again.
 
 Worth being clear about, so nobody goes looking:
 
-- No recurring events. Every event is a single occurrence.
+- No recurring events. Every event is a single occurrence, and a repeating
+  event in an imported file arrives as one.
 - No invitations, attendance or reminders. It is a calendar, not a scheduler.
 - No per-event access lists. Access follows the category and visibility, and
   nothing else.

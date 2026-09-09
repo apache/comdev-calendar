@@ -21,6 +21,7 @@ from typing import Any
 
 from . import __version__, shortlink
 from .config import Config
+from .icsimport import MAX_IMPORT_BYTES, MAX_IMPORT_EVENTS
 from .models import (
     CATEGORIES,
     DEFAULT_TIMEZONE,
@@ -90,6 +91,34 @@ def _calendar_response(description: str) -> dict[str, Any]:
                 "schema": {"type": "string", "format": "iCalendar"},
                 "example": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n...\r\nEND:VCALENDAR\r\n",
             }
+        },
+    }
+
+
+def _calendar_upload(with_settings: bool = False) -> dict[str, Any]:
+    """The request body of an import: a multipart form, or the file itself."""
+    form: dict[str, Any] = {"file": {"type": "string", "format": "binary"}}
+    if with_settings:
+        form |= {
+            "category": {"type": "string", "enum": list(CATEGORIES)},
+            "project": {"type": "string", "pattern": PROJECT_RE.pattern},
+            "visibility": {"type": "string", "enum": list(VISIBILITIES), "default": "public"},
+        }
+    return {
+        "required": True,
+        "description": (
+            "An iCalendar document, either as the `file` part of a multipart form or as the "
+            f"whole request body. At most {MAX_IMPORT_BYTES // 1024} KiB."
+        ),
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["file"] + (["category"] if with_settings else []),
+                    "properties": form,
+                }
+            },
+            "text/calendar": {"schema": {"type": "string"}},
         },
     }
 
@@ -209,6 +238,55 @@ def _schemas() -> dict[str, Any]:
             "properties": {
                 "events": {"type": "array", "items": {"$ref": "#/components/schemas/Event"}},
                 "count": {"type": "integer", "description": "Number of events in this response."},
+            },
+        },
+        "ImportCandidate": {
+            "type": "object",
+            "description": "An event read out of a file, before it is given a calendar.",
+            "required": ["title", "start", "end", "all_day", "warnings"],
+            "properties": {
+                "title": {"type": "string"},
+                "start": {"type": "string", "description": "ISO 8601 UTC."},
+                "end": {"type": "string", "description": "ISO 8601 UTC, exclusive for all-day."},
+                "all_day": {"type": "boolean"},
+                "description": {"type": "string"},
+                "location": {"type": "string"},
+                "url": {"type": "string"},
+                "timezone": {"type": "string"},
+                "uid": {
+                    "type": ["string", "null"],
+                    "description": "The UID from the file. Not stored; shown so a reader can recognise the entry.",
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "What had to be changed to make this event importable.",
+                },
+            },
+        },
+        "ImportPreview": {
+            "type": "object",
+            "required": ["events", "count", "warnings"],
+            "properties": {
+                "events": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/ImportCandidate"},
+                },
+                "count": {"type": "integer"},
+                "warnings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Problems with the file as a whole, such as entries that were skipped.",
+                },
+            },
+        },
+        "ImportResult": {
+            "type": "object",
+            "required": ["created", "count", "warnings"],
+            "properties": {
+                "created": {"type": "array", "items": {"$ref": "#/components/schemas/Event"}},
+                "count": {"type": "integer"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
             },
         },
         "Error": {
@@ -554,6 +632,72 @@ def _paths() -> dict[str, Any]:
                 },
             }
         },
+        "/api/import/preview": {
+            "post": {
+                "tags": ["Import"],
+                "summary": "Read an iCalendar file without saving anything",
+                "description": (
+                    "Says what the file holds, so a caller can show it before committing to it. "
+                    "Nothing is written and no calendar is chosen yet."
+                ),
+                "requestBody": _calendar_upload(),
+                "responses": {
+                    "200": {
+                        "description": "What was found in the file.",
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ImportPreview"}}},
+                    },
+                    "400": invalid,
+                    "401": unauthenticated,
+                    "413": _error_response(f"The upload was larger than the {MAX_IMPORT_BYTES // 1024} KiB limit."),
+                },
+            }
+        },
+        "/api/import": {
+            "post": {
+                "tags": ["Import"],
+                "summary": "Import an iCalendar file as events",
+                "description": (
+                    "Every event in the file lands in the same calendar, given by `category`, "
+                    "`project` and `visibility`. Send them as form fields alongside the file, or "
+                    "as query parameters when posting the file as the request body.\n\n"
+                    "The import is all or nothing: every event is validated and the permission "
+                    "checked before any of them is written, and the batch is one transaction.\n\n"
+                    f"At most {MAX_IMPORT_EVENTS} events per file. Recurring events are imported as "
+                    "a single occurrence, and entries with no start time, or marked cancelled, are "
+                    "skipped; both are reported in `warnings`."
+                ),
+                "parameters": [
+                    {
+                        "name": "category",
+                        "in": "query",
+                        "description": "Required, unless sent as a form field.",
+                        "schema": {"type": "string", "enum": list(CATEGORIES)},
+                    },
+                    {
+                        "name": "project",
+                        "in": "query",
+                        "description": "Required for project events.",
+                        "schema": {"type": "string", "pattern": PROJECT_RE.pattern},
+                    },
+                    {
+                        "name": "visibility",
+                        "in": "query",
+                        "schema": {"type": "string", "enum": list(VISIBILITIES), "default": "public"},
+                    },
+                ],
+                "requestBody": _calendar_upload(with_settings=True),
+                "responses": {
+                    "201": {
+                        "description": "The events as stored.",
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ImportResult"}}},
+                    },
+                    "400": invalid,
+                    "401": unauthenticated,
+                    "403": forbidden,
+                    "413": _error_response(f"The upload was larger than the {MAX_IMPORT_BYTES // 1024} KiB limit."),
+                },
+            }
+        },
         "/api/openapi.json": {
             "get": {
                 "tags": ["Service"],
@@ -601,6 +745,7 @@ def build(cfg: Config, origin: str = "") -> dict[str, Any]:
         "servers": [{"url": server_url, "description": "This deployment"}],
         "tags": [
             {"name": "Events", "description": "Reading and changing calendar events."},
+            {"name": "Import", "description": "Turning an iCalendar file into events."},
             {"name": "Session", "description": "Who you are and what you may do."},
             {"name": "Service", "description": "Health and documentation."},
         ],

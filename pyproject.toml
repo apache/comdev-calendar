@@ -12,6 +12,7 @@ dependencies = [
     "aiosqlite>=0.20,<1",
     "PyYAML>=6.0.1,<7",
     "hypercorn>=0.17,<1",
+    "icalendar>=6,<8",
 ]
 
 [project.scripts]

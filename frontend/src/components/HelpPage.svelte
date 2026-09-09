@@ -245,6 +245,33 @@
     </section>
 
     <section>
+      <h3>Bringing events in from another calendar</h3>
+      <p>
+        <strong>Import</strong>, next to New event, takes an <code>.ics</code> file and turns
+        everything in it into events. Most calendar applications can export one.
+      </p>
+      <ul>
+        <li>
+          Choose the file first and you get a preview of what was found, including anything the
+          importer had to change. Nothing is saved at this point.
+        </li>
+        <li>
+          Then say which calendar the events belong to, and whether they are public or private. You
+          have to answer: an import can add a lot of events at once, so there is no default that
+          could quietly put them in the wrong place.
+        </li>
+        <li>
+          Every event in the file goes to the same calendar. Import twice if some belong to a
+          project and others do not.
+        </li>
+        <li>
+          Repeating events come in as a single occurrence, since the calendar has no recurrence.
+          Cancelled entries, and ones with no start time, are skipped and counted for you.
+        </li>
+      </ul>
+    </section>
+
+    <section>
       <h3>Shortlinks and subscribing</h3>
       <ul>
         <li>

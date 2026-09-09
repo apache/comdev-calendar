@@ -10,6 +10,7 @@
  */
 
 import type { CalendarEvent, Calendars, EventDraft, SessionInfo } from "./types";
+import type { ImportPreview, ImportResult, ResolvedImportSettings } from "./importing";
 import { apiUrl } from "./base";
 
 export class ApiError extends Error {
@@ -30,6 +31,9 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // FormData carries its own multipart boundary, so the browser has to set the
+  // content type; naming it ourselves would produce a body nothing can parse.
+  const isUpload = typeof FormData !== "undefined" && body instanceof FormData;
   let response: Response;
   try {
     response = await fetch(apiUrl(path), {
@@ -38,9 +42,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       headers: {
         Accept: "application/json",
         "X-No-Redirect": "1",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(body === undefined || isUpload ? {} : { "Content-Type": "application/json" }),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body: isUpload ? (body as FormData) : JSON.stringify(body) }),
     });
   } catch {
     throw new ApiError("Could not reach the calendar service.", 0);
@@ -129,6 +133,23 @@ export const api = {
   },
 
   remove: (id: number) => request<{ deleted: number }>("DELETE", `/events/${id}`),
+
+  /** Reads an .ics file and says what is in it, without saving anything. */
+  previewImport: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<ImportPreview>("POST", "/import/preview", body);
+  },
+
+  /** Turns an .ics file into events on the chosen calendar. */
+  runImport: (file: File, settings: ResolvedImportSettings) => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("category", settings.category);
+    if (settings.visibility) body.append("visibility", settings.visibility);
+    if (settings.project) body.append("project", settings.project);
+    return request<ImportResult>("POST", "/import", body);
+  },
 
   icsUrl: (id: number) => apiUrl(`/events/${id}.ics`),
 
