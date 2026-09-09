@@ -10,6 +10,7 @@ import html
 import logging
 import os
 import pathlib
+import re
 from typing import Any
 
 import asfquart
@@ -75,6 +76,32 @@ class IndexPage:
         return self._cached
 
 
+BASE_TAG_RE = re.compile(r'<base\s+href="[^"]*"\s*/?>', re.IGNORECASE)
+
+
+def set_base_href(document: str, base_path: str) -> str:
+    """Points the document's <base href> at the app's mount point.
+
+    index.html ships with `<base href="/">`. Rewriting it here, rather than
+    baking the prefix in at build time, is what lets one committed build serve
+    both https://host/ and https://host/calendar/. The browser resolves the
+    script, stylesheet and favicon against it, and the frontend reads it back
+    out of document.baseURI to build its own URLs.
+    """
+    replacement = f'<base href="{html.escape(base_path, quote=True)}/">'
+    updated, count = BASE_TAG_RE.subn(replacement, document, count=1)
+    if count:
+        return updated
+    # No tag to rewrite: put one at the top of the head so relative URLs still
+    # resolve. Without this a sub-directory deployment would 404 on its assets.
+    marker = "<head>"
+    index = document.lower().find(marker)
+    if index < 0:
+        return document
+    cut = index + len(marker)
+    return document[:cut] + replacement + document[cut:]
+
+
 def meta_tags(event: Event, url: str) -> str:
     """OpenGraph tags so a pasted shortlink unfurls with the event title."""
     title = html.escape(event.title, quote=True)
@@ -130,7 +157,9 @@ def create_app(
     app: quart.Quart = asfquart.construct(
         APP_ID,
         app_dir=str(cfg.root_dir),
-        oauth=cfg.oauth_uri,
+        # The OAuth endpoint moves under the mount point too, so a
+        # sub-directory deployment does not need a second proxy rule for it.
+        oauth=cfg.url_path(cfg.oauth_uri),
         force_login=True,
         token_file=token_file,
     )
@@ -166,6 +195,7 @@ def create_app(
         document = index.read()
         if document is None:
             return _no_build()
+        document = set_base_href(document, cfg.base_path)
         if extra_head:
             document = inject_head(document, extra_head)
         return quart.Response(
@@ -174,13 +204,13 @@ def create_app(
             headers={"Cache-Control": "no-cache"},
         )
 
-    @app.route("/")
+    @app.route(cfg.url_path("/"))
     async def home() -> quart.Response:
         return await _send_index()
 
     shortlink_prefix = cfg.app.shortlink_prefix.rstrip("/")
 
-    @app.route(f"{shortlink_prefix}/<token>")
+    @app.route(cfg.url_path(f"{shortlink_prefix}/<token>"))
     async def shortlink_page(token: str) -> quart.Response:
         """Shortlink landing page.
 
@@ -197,7 +227,7 @@ def create_app(
             extra = meta_tags(event, url)
         return await _send_index(extra)
 
-    @app.route("/<path:requested>")
+    @app.route(cfg.url_path("/<path:requested>"))
     async def static_or_spa(requested: str) -> quart.Response:
         """Serves a file from the frontend build, falling back to the SPA so
         client-side routes survive a page reload."""
@@ -216,13 +246,41 @@ def create_app(
             return await quart.send_file(target)  # type: ignore[no-any-return]
         return await _send_index()
 
+    api_prefix = cfg.url_path("/api/")
+
     @app.errorhandler(404)
     async def _not_found(_exception: Any) -> quart.Response:
-        if quart.request.path.startswith("/api/"):
+        path = quart.request.path
+        if path.startswith(api_prefix):
             return quart.Response('{"error": "Not found"}', status=404, content_type="application/json")
+        if cfg.base_path and not path.startswith(f"{cfg.base_path}/") and path != cfg.base_path:
+            # A request that missed the mount point entirely. Almost always a
+            # reverse proxy that strips the prefix instead of passing it on, so
+            # say which URL the app actually answers on.
+            return _off_mount_point(path)
         return await _send_index()
+
+    def _off_mount_point(path: str) -> quart.Response:
+        home_url = cfg.url_path("/")
+        if quart.request.method == "GET" and path == "/":
+            return quart.Response(status=302, headers={"Location": home_url})
+        return quart.Response(
+            f"The calendar is served from {home_url} on this host, not {path}.\n"
+            "If you are running behind a reverse proxy, pass the path prefix through rather "
+            "than stripping it, for example:\n"
+            f"    ProxyPass {home_url} http://127.0.0.1:{cfg.server.port}{home_url}\n",
+            status=404,
+            content_type="text/plain; charset=utf-8",
+        )
 
     return app
 
 
-__all__ = ["create_app", "current_session", "inject_head", "meta_tags", "repository_root"]
+__all__ = [
+    "create_app",
+    "current_session",
+    "inject_head",
+    "meta_tags",
+    "repository_root",
+    "set_base_href",
+]

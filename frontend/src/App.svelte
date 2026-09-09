@@ -7,6 +7,7 @@
   import { canCreateAnything, canEdit, draftFromEvent, newDraft } from "./lib/drafts";
   import type { DisplayZone } from "./lib/timezone";
   import { fromWall, nowInZone, toWall } from "./lib/timezone";
+  import { appPath, withoutBase } from "./lib/base";
 
   import Header from "./components/Header.svelte";
   import FilterPanel from "./components/FilterPanel.svelte";
@@ -21,6 +22,11 @@
   const ZONE_STORAGE_KEY = "asf-calendar-zone";
   const SHORTLINK_PATTERN = /^\/e\/([A-Za-z0-9]+)\/?$/;
   const HELP_PATH = "/help";
+
+  /** The current browser path with the deployment's mount point removed. */
+  function routePath(): string | null {
+    return withoutBase(globalThis.location?.pathname ?? "/");
+  }
 
   function stored(key: string): string | null {
     try {
@@ -57,7 +63,7 @@
   let zone = $state<DisplayZone>(initialZone());
   // The cursor is a wall date: its local getters read as the display zone.
   let cursor = $state<Date>(startOfDay(nowInZone(initialZone())));
-  let helpOpen = $state<boolean>(globalThis.location?.pathname === HELP_PATH);
+  let helpOpen = $state<boolean>(routePath() === HELP_PATH);
   let events = $state<CalendarEvent[]>([]);
   let session = $state<SessionInfo | null>(null);
   let calendars = $state<Calendars | null>(null);
@@ -142,7 +148,8 @@
   // ---- shortlink routing --------------------------------------------------
 
   async function openFromLocation() {
-    const path = globalThis.location?.pathname ?? "";
+    const path = routePath();
+    if (path === null) return; // Not a URL this app is mounted on.
     helpOpen = path === HELP_PATH;
     const match = SHORTLINK_PATTERN.exec(path);
     if (!match) return;
@@ -158,14 +165,23 @@
     }
   }
 
+  /** Pushes a route, in app terms: navigate("/help") -> /calendar/help. */
   function navigate(path: string) {
     if (!globalThis.history) return;
-    if (globalThis.location.pathname !== path) globalThis.history.pushState({}, "", path);
+    const target = appPath(path);
+    if (globalThis.location.pathname !== target) globalThis.history.pushState({}, "", target);
   }
 
   function pushShortlink(event: CalendarEvent | null) {
     if (!globalThis.location) return;
-    navigate(event ? new URL(event.shortlink_url, globalThis.location.href).pathname : "/");
+    if (!event) {
+      navigate("/");
+      return;
+    }
+    // The backend builds shortlink_url with the mount point already in it, so
+    // push its path as-is rather than prefixing it a second time.
+    const path = new URL(event.shortlink_url, globalThis.location.href).pathname;
+    if (globalThis.location.pathname !== path) globalThis.history.pushState({}, "", path);
   }
 
   $effect(() => {

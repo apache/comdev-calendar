@@ -2,6 +2,7 @@
   import type { Calendars, SessionInfo } from "../lib/types";
   import type { DisplayZone } from "../lib/timezone";
   import { browserZone, describeDisplayZone } from "../lib/timezone";
+  import { loginUrl, logoutUrl } from "../lib/base";
 
   interface Props {
     calendars: Calendars | null;
@@ -246,12 +247,12 @@
       <h3>Signing in</h3>
       {#if session?.authenticated}
         <p>
-          You are signed in. <a href={session.logout_url ?? "/auth?logout=/"}>Log out</a> when you
+          You are signed in. <a href={session.logout_url ?? logoutUrl()}>Log out</a> when you
           are done, particularly on a shared machine.
         </p>
       {:else}
         <p>
-          <a href={session?.login_url ?? "/auth?login=/"}>Log in</a> with your Apache account. You
+          <a href={session?.login_url ?? loginUrl()}>Log in</a> with your Apache account. You
           will be sent to the foundation's OAuth service and back again. Nothing is stored here
           beyond your username and the projects and committees you belong to.
         </p>

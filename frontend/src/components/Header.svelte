@@ -4,6 +4,7 @@
   import { formatViewTitle } from "../lib/dates";
   import type { DisplayZone } from "../lib/timezone";
   import { describeDisplayZone, explainDisplayZone } from "../lib/timezone";
+  import { assetUrl, loginUrl, logoutUrl } from "../lib/base";
 
   interface Props {
     title: string;
@@ -50,7 +51,7 @@
     <button type="button" class="filters-toggle" onclick={ontogglefilters} aria-label="Toggle filters">
       &#9776;
     </button>
-    <img src="/icon.png" alt="" width="28" height="28" />
+    <img src={assetUrl("icon.png")} alt="" width="28" height="28" />
     <h1>{title}</h1>
   </div>
 
@@ -111,9 +112,9 @@
     {/if}
     {#if session?.authenticated}
       <span class="who" title={session.email ?? ""}>{session.fullname || session.uid}</span>
-      <a class="btn" href={session.logout_url ?? "/auth?logout=/"}>Log out</a>
+      <a class="btn" href={session.logout_url ?? logoutUrl()}>Log out</a>
     {:else}
-      <a class="btn primary" href={session?.login_url ?? "/auth?login=/"}>Log in</a>
+      <a class="btn primary" href={session?.login_url ?? loginUrl()}>Log in</a>
     {/if}
   </div>
 </header>

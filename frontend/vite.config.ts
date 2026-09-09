@@ -5,7 +5,14 @@ import { svelteTesting } from "@testing-library/svelte/vite";
 // The backend the dev server proxies to. Override with BACKEND=... npm run dev
 const backend = process.env.BACKEND ?? "http://127.0.0.1:8080";
 
+// Set this to match server.base_path if the backend you are developing against
+// is mounted in a sub-directory. The dev server itself always serves the app at
+// the root; this only tells the proxy where the backend expects to be called.
+const basePath = (process.env.BASE_PATH ?? "").replace(/\/+$/, "");
+const toBackend = (path: string) => `${basePath}${path}`;
+
 export default defineConfig({
+  base: "./",
   plugins: [svelte(), svelteTesting()],
   server: {
     port: 5173,
@@ -13,8 +20,8 @@ export default defineConfig({
     // Everything the backend owns is proxied, so the dev server behaves like
     // the production deployment (same origin, real session cookies).
     proxy: {
-      "/api": { target: backend, changeOrigin: false },
-      "/auth": { target: backend, changeOrigin: false },
+      "/api": { target: backend, changeOrigin: false, rewrite: toBackend },
+      "/auth": { target: backend, changeOrigin: false, rewrite: toBackend },
     },
   },
   build: {

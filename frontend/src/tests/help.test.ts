@@ -75,7 +75,19 @@ describe("what it says about you", () => {
       props: props({ calendars: anonymousCalendars, session: { authenticated: false } }),
     });
     expect(screen.getByText(/browsing anonymously/)).toBeInTheDocument();
-    expect(screen.getByText("Log in")).toBeInTheDocument();
+    expect(screen.getByText("Log in")).toHaveAttribute("href", "/auth?login=/");
+  });
+
+  it("puts the mount point in the login link when there is no session yet", () => {
+    const tag = document.createElement("base");
+    tag.setAttribute("href", "/calendar/");
+    document.head.appendChild(tag);
+    try {
+      render(HelpPage, { props: props({ calendars: anonymousCalendars, session: null }) });
+      expect(screen.getByText("Log in")).toHaveAttribute("href", "/calendar/auth?login=/calendar/");
+    } finally {
+      tag.remove();
+    }
   });
 
   it("lists the projects and committees of a signed-in user", () => {

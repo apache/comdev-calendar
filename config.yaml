@@ -16,6 +16,7 @@ server:
   # Leave empty to derive it from the incoming request, which is what you
   # want locally.
   base_url: ""
+  base_path: "/calendar/"
 
 database:
   # Path to the SQLite database file, relative to this config file.

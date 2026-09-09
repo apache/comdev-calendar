@@ -352,6 +352,42 @@ describe("Header", () => {
     expect(screen.queryByText("New event")).not.toBeInTheDocument();
   });
 
+  it("falls back to a sensible login URL before the session has loaded", () => {
+    render(Header, { props: headerProps({ session: null }) });
+    expect(screen.getByText("Log in")).toHaveAttribute("href", "/auth?login=/");
+  });
+
+  it("puts the mount point in the fallback login URL", () => {
+    const tag = document.createElement("base");
+    tag.setAttribute("href", "/calendar/");
+    document.head.appendChild(tag);
+    try {
+      render(Header, { props: headerProps({ session: null }) });
+      expect(screen.getByText("Log in")).toHaveAttribute("href", "/calendar/auth?login=/calendar/");
+    } finally {
+      tag.remove();
+    }
+  });
+
+  it("prefers the URL the backend handed it over the fallback", () => {
+    const tag = document.createElement("base");
+    tag.setAttribute("href", "/calendar/");
+    document.head.appendChild(tag);
+    try {
+      render(Header, {
+        props: headerProps({
+          session: { authenticated: false, login_url: "/calendar/session?login=/calendar/" },
+        }),
+      });
+      expect(screen.getByText("Log in")).toHaveAttribute(
+        "href",
+        "/calendar/session?login=/calendar/",
+      );
+    } finally {
+      tag.remove();
+    }
+  });
+
   it("shows who is signed in, and how to leave", () => {
     render(Header, {
       props: headerProps({

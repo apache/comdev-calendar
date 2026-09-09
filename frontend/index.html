@@ -1,6 +1,13 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <!--
+      Where the app is mounted. The backend rewrites this to match
+      server.base_path in config.yaml, so one build works whether the calendar
+      lives at https://host/ or at https://host/calendar/. Every other URL in
+      the page is relative and resolves against it, so it has to come first.
+    -->
+    <base href="/" />
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/png" href="/icon.png" />

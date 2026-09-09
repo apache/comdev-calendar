@@ -1,11 +1,16 @@
 /**
  * The API client.
  *
+ * Paths here are given relative to /api; apiUrl() puts the deployment's mount
+ * point in front, so the client works whether the app is served from the root
+ * of a host or from a sub-directory.
+ *
  * Every request carries X-No-Redirect so asfquart answers an unauthenticated
  * API call with a 401 instead of bouncing the fetch to the OAuth provider.
  */
 
 import type { CalendarEvent, Calendars, EventDraft, SessionInfo } from "./types";
+import { apiUrl } from "./base";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -27,7 +32,7 @@ export class ApiError extends Error {
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await fetch(apiUrl(path), {
       method,
       credentials: "same-origin",
       headers: {
@@ -94,38 +99,38 @@ export function buildQuery(query: EventQuery): string {
 }
 
 export const api = {
-  session: () => request<SessionInfo>("GET", "/api/session"),
+  session: () => request<SessionInfo>("GET", "/session"),
 
-  calendars: () => request<Calendars>("GET", "/api/calendars"),
+  calendars: () => request<Calendars>("GET", "/calendars"),
 
   events: async (query: EventQuery = {}): Promise<CalendarEvent[]> => {
-    const body = await request<{ events: CalendarEvent[] }>("GET", `/api/events${buildQuery(query)}`);
+    const body = await request<{ events: CalendarEvent[] }>("GET", `/events${buildQuery(query)}`);
     return body.events;
   },
 
   event: async (id: number): Promise<CalendarEvent> => {
-    const body = await request<{ event: CalendarEvent }>("GET", `/api/events/${id}`);
+    const body = await request<{ event: CalendarEvent }>("GET", `/events/${id}`);
     return body.event;
   },
 
   byShortlink: async (token: string): Promise<CalendarEvent> => {
-    const body = await request<{ event: CalendarEvent }>("GET", `/api/shortlink/${encodeURIComponent(token)}`);
+    const body = await request<{ event: CalendarEvent }>("GET", `/shortlink/${encodeURIComponent(token)}`);
     return body.event;
   },
 
   create: async (draft: EventDraft): Promise<CalendarEvent> => {
-    const body = await request<{ event: CalendarEvent }>("POST", "/api/events", draft);
+    const body = await request<{ event: CalendarEvent }>("POST", "/events", draft);
     return body.event;
   },
 
   update: async (id: number, draft: EventDraft): Promise<CalendarEvent> => {
-    const body = await request<{ event: CalendarEvent }>("PUT", `/api/events/${id}`, draft);
+    const body = await request<{ event: CalendarEvent }>("PUT", `/events/${id}`, draft);
     return body.event;
   },
 
-  remove: (id: number) => request<{ deleted: number }>("DELETE", `/api/events/${id}`),
+  remove: (id: number) => request<{ deleted: number }>("DELETE", `/events/${id}`),
 
-  icsUrl: (id: number) => `/api/events/${id}.ics`,
+  icsUrl: (id: number) => apiUrl(`/events/${id}.ics`),
 
-  feedUrl: (query: EventQuery = {}) => `/api/events.ics${buildQuery(query)}`,
+  feedUrl: (query: EventQuery = {}) => apiUrl(`/events.ics${buildQuery(query)}`),
 };

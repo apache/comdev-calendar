@@ -88,7 +88,9 @@ def _time_arg(args: Any, name: str) -> int | None:
 
 def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
     """Builds the /api blueprint bound to a config and a storage instance."""
-    api = quart.Blueprint("api", __name__, url_prefix="/api")
+    # The whole API moves under the deployment's mount point, so it stays on
+    # the same origin and path prefix as the pages that call it.
+    api = quart.Blueprint("api", __name__, url_prefix=cfg.url_path("/api"))
 
     def shortlink_url(event: Event) -> str:
         base = quart.request.host_url if quart.has_request_context() else ""
@@ -128,8 +130,10 @@ def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
     @api.route("/session")
     async def session_info() -> quart.Response:
         session = await current_session()
+        oauth = cfg.url_path(cfg.oauth_uri)
+        home = cfg.url_path("/")
         if session is None:
-            return _json({"authenticated": False, "login_url": f"{cfg.oauth_uri}?login=/"})
+            return _json({"authenticated": False, "login_url": f"{oauth}?login={home}"})
         return _json(
             {
                 "authenticated": True,
@@ -140,7 +144,7 @@ def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
                 "is_chair": bool(getattr(session, "isChair", False)),
                 "projects": sorted(getattr(session, "projects", []) or []),
                 "committees": sorted(getattr(session, "committees", []) or []),
-                "logout_url": f"{cfg.oauth_uri}?logout=/",
+                "logout_url": f"{oauth}?logout={home}",
             }
         )
 

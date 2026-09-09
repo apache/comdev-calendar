@@ -159,6 +159,46 @@ describe("request handling", () => {
   });
 });
 
+describe("when the app is mounted in a sub-directory", () => {
+  function mountAt(href: string) {
+    const tag = document.createElement("base");
+    tag.setAttribute("href", href);
+    document.head.appendChild(tag);
+    return () => tag.remove();
+  }
+
+  it("puts the prefix in front of every request", async () => {
+    const unmount = mountAt("/calendar/");
+    try {
+      fetchMock.mockResolvedValue(respond({ events: [] }));
+      await api.events({ q: "release" });
+      expect(fetchMock.mock.calls[0][0]).toBe("/calendar/api/events?q=release");
+
+      fetchMock.mockResolvedValue(respond({ event: makeEvent() }));
+      await api.event(3);
+      expect(fetchMock.mock.calls[1][0]).toBe("/calendar/api/events/3");
+
+      fetchMock.mockResolvedValue(respond({ deleted: 3 }));
+      await api.remove(3);
+      expect(fetchMock.mock.calls[2][0]).toBe("/calendar/api/events/3");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("prefixes the download URLs too", () => {
+    const unmount = mountAt("/calendar/");
+    try {
+      expect(api.icsUrl(12)).toBe("/calendar/api/events/12.ics");
+      expect(api.feedUrl({ categories: ["project"] })).toBe(
+        "/calendar/api/events.ics?category=project",
+      );
+    } finally {
+      unmount();
+    }
+  });
+});
+
 describe("download URLs", () => {
   it("points at the single-event export", () => {
     expect(api.icsUrl(12)).toBe("/api/events/12.ics");

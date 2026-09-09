@@ -41,6 +41,7 @@ access rules are built on. The frontend is Svelte 5 built with Vite.
 - [Installing](#installing)
 - [Configuration](#configuration)
 - [Running it](#running-it)
+- [Serving from a sub-directory](#serving-from-a-sub-directory)
 - [Timezones](#timezones)
 - [The API](#the-api)
 - [Project layout](#project-layout)
@@ -257,8 +258,103 @@ ProxyPass        / http://127.0.0.1:8080/
 ProxyPassReverse / http://127.0.0.1:8080/
 ```
 
+That is the layout for a calendar at the root of its host. To serve it from a
+sub-directory instead, see [Serving from a
+sub-directory](#serving-from-a-sub-directory).
+
 Session cookies are set with `Secure`, so the deployment has to be served over
 HTTPS. See [Debugging](#debugging) if logins seem to work but do not stick.
+
+## Serving from a sub-directory
+
+The calendar normally sits at the root of a host, at
+`https://calendar.apache.org/`. It can be mounted in a sub-directory instead by
+setting one config key:
+
+```yaml
+server:
+  base_path: "/calendar"
+```
+
+Everything moves under it in one go: the pages, the whole `/api` surface, the
+OAuth endpoint, the static assets and the event shortlinks. A shortlink becomes
+`https://calendar.apache.org/calendar/e/AbCd2345`, the login URL becomes
+`/calendar/auth?login=/calendar/`, and the callback URL asfquart sends to the
+OAuth provider comes back to `/calendar/auth` as well, so the whole login
+round-trip stays inside the mount point.
+
+**The reverse proxy has to pass the prefix through, not strip it.** The app
+answers on the prefixed paths, so:
+
+```apache
+ProxyPreserveHost On
+ProxyPass        /calendar/ http://127.0.0.1:8080/calendar/
+ProxyPassReverse /calendar/ http://127.0.0.1:8080/calendar/
+```
+
+Note the `/calendar/` on both sides. Getting this wrong is the one likely
+mistake, so the app watches for it: a request that arrives outside the mount
+point gets a 404 saying which URL the calendar answers on and printing the
+`ProxyPass` line it expects. A plain `GET /` redirects to `/calendar/`.
+
+### How it works, and why the build is not involved
+
+The obvious way to do this in a Vite app is `base: "/calendar/"` at build time.
+That would be wrong here, because `frontend/dist` is committed to the repository
+and shared between deployments - baking a prefix in would tie one build to one
+mount point.
+
+Instead the prefix is applied when a page is served:
+
+- Vite is configured with `base: "./"`, so the built `index.html` refers to its
+  script, stylesheet and favicon relatively. Nothing in `dist` mentions an
+  absolute path.
+- `index.html` ships with `<base href="/">` as the first thing in its `<head>`.
+  The backend rewrites that one attribute to the configured mount point on the
+  way out. The browser then resolves those relative URLs against it, which is
+  also what makes them work on a nested route such as `/calendar/e/AbCd2345`,
+  where resolving against the document's own directory would look for the
+  assets under `/calendar/e/`.
+- The frontend reads the mount point back out of `document.baseURI` and puts it
+  in front of its own API calls, its client-side routes and its `pushState`
+  navigation. That lives in `frontend/src/lib/base.ts`.
+
+So the same committed build serves both layouts, and switching between them is a
+config edit and a restart.
+
+One thing to keep in mind if you are editing the frontend: because `<base href>`
+is set, **every relative URL in the page resolves against the mount point**, not
+against the current route. Build paths with the helpers in `base.ts` rather than
+writing `/api/...`, `/auth?login=/` or `/icon.png` by hand, or they will break
+the moment somebody mounts the app in a sub-directory:
+
+| Helper                | For                                                   |
+| --------------------- | ----------------------------------------------------- |
+| `apiUrl("/events")`   | an API endpoint                                        |
+| `appPath("/help")`    | a client-side route, including `pushState` targets     |
+| `assetUrl("icon.png")`| a file shipped in the build                            |
+| `loginUrl()`          | the OAuth login link                                   |
+| `logoutUrl()`         | the OAuth logout link                                  |
+| `withoutBase(path)`   | turning `location.pathname` back into an app route     |
+
+The login and logout links are a special case worth knowing about. `/api/session`
+returns the real URLs, because a deployment can move the endpoint with the
+`oauth.uri` config key, and those always win. `loginUrl()` and `logoutUrl()` are
+the fallbacks used before that request has come back or if it fails - which is
+precisely when somebody is most likely to be reaching for the login link, so
+they have to be right too.
+
+### Developing against a mounted backend
+
+The Vite dev server always serves the app at the root. If the backend you are
+proxying to has a `base_path` set, tell the proxy where to find it:
+
+```shell
+BASE_PATH=/calendar npm run dev
+```
+
+For everyday work it is simpler to leave `base_path` empty in your local
+`config.yaml` and test the sub-directory setup against the built frontend.
 
 ## Timezones
 
@@ -414,6 +510,7 @@ frontend/
     components/      Header, FilterPanel, the five views, EventDialog, HelpPage
     lib/
       api.ts         the API client
+      base.ts        the deployment's mount point, for sub-directory installs
       dates.ts       date arithmetic and grid maths
       timezone.ts    wall-clock conversions and the display-zone switch
       events.ts      grouping, overlap layout, colours
@@ -576,6 +673,22 @@ from asfcalendar.permissions import can_view, can_write
 session = ClientSession({"uid": "bob", "pmcs": ["httpd"], "projects": ["httpd"]})
 can_view(some_event, session)
 ```
+
+**Under a sub-directory, the page loads but is unstyled and blank.** The browser
+is fetching the assets from the wrong place. Look at the served HTML: the
+`<base href>` should be `/calendar/`, matching `server.base_path`. If it says
+`/`, the config did not take effect; if the assets 404, the proxy is probably
+stripping the prefix, which the section above covers.
+
+**Under a sub-directory, everything 404s with a message about `ProxyPass`.**
+That is the app telling you the request arrived outside its mount point. Either
+`server.base_path` does not match what the proxy sends, or the proxy is
+rewriting `/calendar/x` to `/x`. The message prints the directive it expects.
+
+**Shortlinks come out as `/calendar/calendar/e/...`.** Older configs put the
+path in `server.base_url`. Only the scheme and host are read from it now, so
+this should not happen; if it does, the `base_path` value itself has the prefix
+twice.
 
 **An event shows up on the wrong day.** Check the timezone switch in the header.
 An event at 22:00 UTC is the following morning in Tokyo, and the calendar will
