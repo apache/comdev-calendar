@@ -1,0 +1,155 @@
+/* Global styles and the colour system the whole UI shares. */
+
+:root {
+  color-scheme: light dark;
+
+  --asf-red: #d22128;
+  --asf-red-dark: #a81a20;
+
+  --bg: #f6f7f9;
+  --bg-panel: #ffffff;
+  --bg-subtle: #eef0f4;
+  --bg-hover: #e6e9ef;
+  --text: #1c2024;
+  --text-muted: #5d6773;
+  --text-faint: #8a94a0;
+  --border: #d9dee5;
+  --border-strong: #b9c2cd;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 8px 32px rgba(16, 24, 40, 0.18);
+  --today: #fff6e5;
+  --radius: 6px;
+
+  --chip-bg: hsl(var(--hue, 210) 70% 94%);
+  --chip-border: hsl(var(--hue, 210) 55% 70%);
+  --chip-text: hsl(var(--hue, 210) 65% 25%);
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --bg-panel: #1c2026;
+    --bg-subtle: #22272e;
+    --bg-hover: #2b323a;
+    --text: #e6e9ee;
+    --text-muted: #9aa5b1;
+    --text-faint: #6d7883;
+    --border: #2e353d;
+    --border-strong: #414a55;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --today: #3a2f16;
+
+    --chip-bg: hsl(var(--hue, 210) 35% 22%);
+    --chip-border: hsl(var(--hue, 210) 45% 42%);
+    --chip-text: hsl(var(--hue, 210) 60% 85%);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: var(--asf-red);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.55rem;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--asf-red);
+  outline-offset: 1px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 5rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+}
+
+.btn.primary {
+  background: var(--asf-red);
+  border-color: var(--asf-red);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: var(--asf-red-dark);
+}
+
+.btn.danger {
+  color: var(--asf-red);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

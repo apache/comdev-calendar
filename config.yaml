@@ -1,0 +1,47 @@
+# ASF Community Calendar - configuration
+#
+# Copy this file to config.yaml and edit as needed. asfquart reads config.yaml
+# from the application directory (the repository root) at startup, and the app
+# reloads when the file changes while running in debug mode.
+#
+# Every key below is optional; the values shown are the defaults.
+
+server:
+  # Address and port the development server binds to. Behind a reverse proxy
+  # you would normally run this under hypercorn instead; see the README.
+  host: 127.0.0.1
+  port: 8085
+
+  # Absolute base URL of the deployment, used when building shortlink URLs.
+  # Leave empty to derive it from the incoming request, which is what you
+  # want locally.
+  base_url: ""
+
+database:
+  # Path to the SQLite database file, relative to this config file.
+  path: "calendar.sqlite3"
+
+app:
+  title: "ASF Community Calendar"
+
+  # Where the built Svelte frontend lives, relative to this config file.
+  # Produced by `npm run build` in the frontend directory.
+  frontend_dist: "frontend/dist"
+
+  # Timezone label shown in the UI. Times are stored in UTC regardless.
+  default_timezone: "UTC"
+
+  # URL prefix for event shortlinks, e.g. /e/AbCd1234
+  shortlink_prefix: "/e"
+
+oauth:
+  # Where asfquart mounts its OAuth handler. /auth?login=/ starts a login,
+  # /auth?logout=/ ends one.
+  uri: "/auth"
+
+# Enables Quart debug mode and source reloading. Never enable in production.
+debug: false
+
+# Read directly by asfquart: maximum session lifetime in seconds, regardless
+# of activity. 0 means no limit (sessions still expire after seven idle days).
+MAX_SESSION_AGE: 0

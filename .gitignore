@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Runtime state
+apptoken.txt
+calendar.sqlite3
+calendar.sqlite3-shm
+calendar.sqlite3-wal
+
+# Node / frontend build
+node_modules/
+frontend/dist/
+
+# Editors
+.idea/
+.vscode/
+*.iml
+.DS_Store

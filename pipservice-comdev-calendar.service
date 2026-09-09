@@ -1,0 +1,16 @@
+[Unit]
+Description=ASF Community Calendar
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+Environment=UV_PYTHON=/usr/bin/python3
+Environment=UV_PYTHON_DOWNLOADS=never
+Type=exec
+WorkingDirectory=/opt/comdev-calendar/backend/
+PIDFile=/opt/comdev-calendar/dashboard-frontend.pid
+ExecStart=/usr/local/bin/uv run asf-calendar
+ExecReload=/bin/kill -SIGINT $MAINPID
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

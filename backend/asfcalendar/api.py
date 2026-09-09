@@ -1,0 +1,291 @@
+"""JSON API for the calendar.
+
+Every endpoint under ``/api`` answers with JSON, including errors. Anonymous
+requests are fine for reads; anything that changes data goes through
+``asfquart.auth.require`` first and then through ``permissions.check_write``.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, TypeVar, cast
+
+import asfquart.auth
+import asfquart.session
+import quart
+
+from . import ics
+from .config import Config
+from .models import Event, ValidationError, parse_event_payload, parse_timestamp
+from .permissions import (
+    PermissionDenied,
+    SessionLike,
+    can_view,
+    check_view,
+    check_write,
+    uid_of,
+    visible_calendars,
+)
+from .storage import DEFAULT_SORT, MAX_LIMIT, SORT_COLUMNS, Storage
+
+ViewFunc = TypeVar("ViewFunc", bound=Callable[..., Awaitable[quart.Response]])
+
+
+def require_session(func: ViewFunc) -> ViewFunc:
+    """asfquart's @auth.require, with type information attached.
+
+    asfquart ships no type hints, so applying its decorator directly would
+    erase the signature of every view it touches.
+    """
+    return cast(ViewFunc, asfquart.auth.require(func))
+
+
+async def current_session() -> SessionLike | None:
+    """The logged-in user, or None. Wrapped so tests have one thing to patch."""
+    return await asfquart.session.read()  # type: ignore[no-any-return]
+
+
+def _json(payload: Any, status: int = 200) -> quart.Response:
+    response = quart.jsonify(payload)
+    response.status_code = status
+    return response
+
+
+def _error(message: str, status: int, field: str | None = None) -> quart.Response:
+    body: dict[str, Any] = {"error": message}
+    if field:
+        body["field"] = field
+    return _json(body, status)
+
+
+def _multi(args: Any, *names: str) -> list[str]:
+    """Collects a filter that may be repeated (?category=a&category=b) or
+    comma-separated (?categories=a,b)."""
+    collected: list[str] = []
+    for name in names:
+        for raw in args.getlist(name):
+            collected.extend(piece.strip() for piece in str(raw).split(","))
+    return [piece for piece in collected if piece]
+
+
+def _int_arg(args: Any, name: str, default: int) -> int:
+    raw = args.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"'{name}' must be an integer", name) from exc
+
+
+def _time_arg(args: Any, name: str) -> int | None:
+    raw = args.get(name)
+    if raw in (None, ""):
+        return None
+    return parse_timestamp(raw, name)
+
+
+def create_blueprint(cfg: Config, store: Storage) -> quart.Blueprint:
+    """Builds the /api blueprint bound to a config and a storage instance."""
+    api = quart.Blueprint("api", __name__, url_prefix="/api")
+
+    def shortlink_url(event: Event) -> str:
+        base = quart.request.host_url if quart.has_request_context() else ""
+        return cfg.shortlink_url(event.shortlink, fallback_base=base)
+
+    def dump(event: Event) -> dict[str, Any]:
+        return event.to_json(shortlink_url(event))
+
+    def dump_all(events: Iterable[Event], session: SessionLike | None) -> list[dict[str, Any]]:
+        # Belt and braces: the SQL already filtered by visibility, but we do not
+        # want a future query bug to turn into a disclosure bug.
+        return [dump(event) for event in events if can_view(event, session)]
+
+    # ---- error handling ---------------------------------------------------
+
+    @api.errorhandler(ValidationError)
+    async def _on_validation_error(error: ValidationError) -> quart.Response:
+        return _error(error.message, 400, error.field)
+
+    @api.errorhandler(PermissionDenied)
+    async def _on_permission_denied(error: PermissionDenied) -> quart.Response:
+        return _error(error.message, error.status)
+
+    @api.errorhandler(asfquart.auth.AuthenticationFailed)
+    async def _on_auth_failed(error: asfquart.auth.AuthenticationFailed) -> quart.Response:
+        # 401 rather than 403 when there is simply no session, so the frontend
+        # can offer a login link instead of an apology.
+        status = 401 if error.message == asfquart.auth.Requirements.E_NOT_LOGGED_IN else error.errorcode
+        return _error(error.message, status)
+
+    @api.errorhandler(404)
+    async def _on_404(_exception: Any) -> quart.Response:
+        return _error("Not found", 404)
+
+    # ---- session and calendars -------------------------------------------
+
+    @api.route("/session")
+    async def session_info() -> quart.Response:
+        session = await current_session()
+        if session is None:
+            return _json({"authenticated": False, "login_url": f"{cfg.oauth_uri}?login=/"})
+        return _json(
+            {
+                "authenticated": True,
+                "uid": uid_of(session),
+                "fullname": getattr(session, "fullname", None),
+                "email": getattr(session, "email", None),
+                "is_member": bool(getattr(session, "isMember", False)),
+                "is_chair": bool(getattr(session, "isChair", False)),
+                "projects": sorted(getattr(session, "projects", []) or []),
+                "committees": sorted(getattr(session, "committees", []) or []),
+                "logout_url": f"{cfg.oauth_uri}?logout=/",
+            }
+        )
+
+    @api.route("/calendars")
+    async def calendars() -> quart.Response:
+        session = await current_session()
+        payload = visible_calendars(session)
+        payload["title"] = cfg.app.title
+        payload["default_display_zone"] = cfg.app.default_display_zone
+        return _json(payload)
+
+    @api.route("/healthz")
+    async def healthz() -> quart.Response:
+        return _json({"status": "ok", "time": int(time.time())})
+
+    # ---- reading events ---------------------------------------------------
+
+    async def _query_events(session: SessionLike | None) -> list[Event]:
+        args = quart.request.args
+        sort = args.get("sort", DEFAULT_SORT)
+        if sort not in SORT_COLUMNS:
+            raise ValidationError(f"'sort' must be one of: {', '.join(sorted(SORT_COLUMNS))}", "sort")
+        visibility = args.get("visibility") or None
+        if visibility not in (None, "public", "private"):
+            raise ValidationError("'visibility' must be 'public' or 'private'", "visibility")
+        owner = args.get("owner") or None
+        if owner == "me":
+            owner = uid_of(session)
+            if owner is None:
+                return []
+        return await store.query(
+            session,
+            start=_time_arg(args, "start"),
+            end=_time_arg(args, "end"),
+            categories=_multi(args, "category", "categories"),
+            projects=_multi(args, "project", "projects"),
+            visibility=visibility,
+            owner=owner,
+            search=args.get("q"),
+            sort=sort,
+            limit=_int_arg(args, "limit", MAX_LIMIT),
+            offset=_int_arg(args, "offset", 0),
+        )
+
+    @api.route("/events")
+    async def list_events() -> quart.Response:
+        session = await current_session()
+        events = await _query_events(session)
+        return _json({"events": dump_all(events, session), "count": len(events)})
+
+    @api.route("/events.ics")
+    async def list_events_ics() -> quart.Response:
+        session = await current_session()
+        events = [event for event in await _query_events(session) if can_view(event, session)]
+        body = ics.render(
+            events,
+            name=cfg.app.title,
+            shortlinks={event.id: shortlink_url(event) for event in events},
+        )
+        return quart.Response(body, content_type="text/calendar; charset=utf-8")
+
+    @api.route("/events/<int:event_id>")
+    async def get_event(event_id: int) -> quart.Response:
+        session = await current_session()
+        event = await store.get(event_id)
+        if event is None:
+            return _error("No such event", 404)
+        check_view(event, session)
+        return _json({"event": dump(event)})
+
+    @api.route("/events/<int:event_id>.ics")
+    async def get_event_ics(event_id: int) -> quart.Response:
+        session = await current_session()
+        event = await store.get(event_id)
+        if event is None:
+            return _error("No such event", 404)
+        check_view(event, session)
+        body = ics.render([event], name=event.title, shortlinks={event.id: shortlink_url(event)})
+        return quart.Response(
+            body,
+            content_type="text/calendar; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="event-{event.shortlink}.ics"'},
+        )
+
+    @api.route("/shortlink/<token>")
+    async def get_by_shortlink(token: str) -> quart.Response:
+        session = await current_session()
+        event = await store.get_by_shortlink(token)
+        if event is None:
+            return _error("No such event", 404)
+        check_view(event, session)
+        return _json({"event": dump(event)})
+
+    # ---- writing events ---------------------------------------------------
+    #
+    # The bare @require decorator only insists on a valid session; who may
+    # touch which calendar is decided by permissions.check_write(), which uses
+    # asfquart's Requirements.member for the foundation category.
+
+    @api.route("/events", methods=["POST"])
+    @require_session
+    async def create_event() -> quart.Response:
+        session = await current_session()
+        payload = parse_event_payload(await _body())
+        check_write(payload, session)
+        owner = uid_of(session)
+        assert owner is not None  # @require guarantees a session
+        event = await store.create(payload, owner)
+        return _json({"event": dump(event)}, 201)
+
+    @api.route("/events/<int:event_id>", methods=["PUT", "PATCH"])
+    @require_session
+    async def update_event(event_id: int) -> quart.Response:
+        session = await current_session()
+        existing = await store.get(event_id)
+        if existing is None:
+            return _error("No such event", 404)
+        # You must be allowed to change the event as it stands *and* as it
+        # would be after the edit, so nobody can move an event into a calendar
+        # they cannot write to (or out of one they can).
+        check_write(existing, session)
+        payload = parse_event_payload(await _body())
+        check_write(payload, session)
+        updated = await store.update(event_id, payload)
+        if updated is None:
+            return _error("No such event", 404)
+        return _json({"event": dump(updated)})
+
+    @api.route("/events/<int:event_id>", methods=["DELETE"])
+    @require_session
+    async def delete_event(event_id: int) -> quart.Response:
+        session = await current_session()
+        existing = await store.get(event_id)
+        if existing is None:
+            return _error("No such event", 404)
+        check_write(existing, session)
+        await store.delete(event_id)
+        return _json({"deleted": event_id})
+
+    return api
+
+
+async def _body() -> Any:
+    """Reads the request body as JSON, with a friendly error for junk."""
+    try:
+        return await quart.request.get_json(force=True)
+    except Exception as exc:  # quart raises a werkzeug BadRequest subclass
+        raise ValidationError("Request body must be valid JSON") from exc
