@@ -205,6 +205,24 @@ class TestThingsThisCalendarCannotDo:
         assert len(result.candidates) == 1
         assert any("repeats" in warning for warning in result.candidates[0].warnings)
 
+    def test_a_modified_occurrence_keeps_the_uid_of_the_event_it_belongs_to(self) -> None:
+        """UIDs are not unique, so nothing downstream may treat one as an identifier.
+
+        This is how every exporter writes a repeating event with an exception:
+        the series, then one VEVENT per moved occurrence, all under one UID. The
+        import preview keyed its list on the UID and fell over on a real file.
+        """
+        document = calendar(
+            event(UID="1@t", SUMMARY="Weekly", DTSTART="20260710T090000Z", RRULE="FREQ=WEEKLY;COUNT=5"),
+            event(UID="1@t", SUMMARY="Weekly (moved)", DTSTART="20260717T110000Z", RECURRENCE_ID="20260717T090000Z"),
+        )
+        candidates = parse(document).candidates
+        assert [candidate.title for candidate in candidates] == ["Weekly", "Weekly (moved)"]
+        assert {candidate.uid for candidate in candidates} == {"1@t"}
+
+    def test_an_event_with_no_uid_still_imports(self) -> None:
+        assert only(calendar(event(SUMMARY="Anonymous", DTSTART="20260710T090000Z"))).uid is None
+
     def test_cancelled_events_are_left_out(self) -> None:
         document = calendar(
             TIMED,

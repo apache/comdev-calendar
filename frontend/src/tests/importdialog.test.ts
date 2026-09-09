@@ -4,12 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 
 import ImportDialog from "../components/ImportDialog.svelte";
+import type { ImportCandidate } from "../lib/importing";
 import { makeCalendars, makeEvent } from "./factories";
 
 const noop = () => {};
 const fetchMock = vi.fn();
 
-const CANDIDATE = {
+const CANDIDATE: ImportCandidate = {
   title: "Community call",
   start: "2026-07-10T13:00:00Z",
   end: "2026-07-10T14:00:00Z",
@@ -19,7 +20,7 @@ const CANDIDATE = {
   url: "",
   timezone: "Europe/Berlin",
   uid: "1@t",
-  warnings: [] as string[],
+  warnings: [],
 };
 
 function respond(body: unknown, status = 200) {
@@ -29,7 +30,7 @@ function respond(body: unknown, status = 200) {
   });
 }
 
-function previewOf(events = [CANDIDATE], warnings: string[] = []) {
+function previewOf(events: ImportCandidate[] = [CANDIDATE], warnings: string[] = []) {
   return { events, count: events.length, warnings };
 }
 
@@ -151,6 +152,45 @@ describe("the preview", () => {
     await attach(container);
     await waitFor(() => expect(screen.getByText("This event repeats.")).toBeInTheDocument());
     expect(screen.getByText(/1 thing to note/)).toBeInTheDocument();
+  });
+
+  it("renders recurrence overrides, which all carry the parent event's UID", async () => {
+    // A repeating event exported from Google or Outlook is one VEVENT with an
+    // RRULE plus one per modified occurrence, and every one of them repeats the
+    // same UID. Keying the list on the UID made a real file crash the dialog.
+    const override = { ...CANDIDATE, title: "Community call (moved)" };
+    fetchMock.mockResolvedValue(respond(previewOf([CANDIDATE, override])));
+    const { container } = render(ImportDialog, { props: props() });
+    await attach(container);
+    await waitFor(() => expect(screen.getByText("2 events found")).toBeInTheDocument());
+    expect(screen.getByText("Community call (moved)")).toBeInTheDocument();
+  });
+
+  it("renders events with no UID at all", async () => {
+    const anonymous = { ...CANDIDATE, uid: null };
+    fetchMock.mockResolvedValue(
+      respond(previewOf([anonymous, { ...anonymous, title: "ApacheCon" }])),
+    );
+    const { container } = render(ImportDialog, { props: props() });
+    await attach(container);
+    await waitFor(() => expect(screen.getByText("2 events found")).toBeInTheDocument());
+    expect(screen.getByText("ApacheCon")).toBeInTheDocument();
+  });
+
+  it("repeats a warning the file raises twice", async () => {
+    const twice = ["Two entries were skipped.", "Two entries were skipped."];
+    fetchMock.mockResolvedValue(respond(previewOf([CANDIDATE], twice)));
+    const { container } = render(ImportDialog, { props: props() });
+    await attach(container);
+    await waitFor(() => expect(screen.getAllByText("Two entries were skipped.")).toHaveLength(2));
+  });
+
+  it("repeats a warning one event raises twice", async () => {
+    const noisy = { ...CANDIDATE, warnings: ["Something was cut short.", "Something was cut short."] };
+    fetchMock.mockResolvedValue(respond(previewOf([noisy])));
+    const { container } = render(ImportDialog, { props: props() });
+    await attach(container);
+    await waitFor(() => expect(screen.getAllByText("Something was cut short.")).toHaveLength(2));
   });
 
   it("reports a file it cannot read", async () => {

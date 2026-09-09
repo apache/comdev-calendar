@@ -166,17 +166,24 @@
           {/if}
         </h3>
 
-        {#each preview.warnings as warning (warning)}
+        {#each preview.warnings as warning}
           <p class="warning">{warning}</p>
         {/each}
 
+        <!--
+          These three lists are unkeyed on purpose. A preview is replaced whole
+          or not at all, so there is no identity to preserve across a change,
+          and nothing in a file is unique enough to key on: a repeating event
+          exported from Google or Outlook repeats its UID on every modified
+          occurrence, and two entries can raise word-for-word the same warning.
+        -->
         <ul>
-          {#each preview.events as candidate, index (candidate.uid ?? index)}
+          {#each preview.events as candidate}
             <li>
               <span class="title">{candidate.title}</span>
               <span class="when">{when(candidate)}</span>
               {#if candidate.location}<span class="where muted">{candidate.location}</span>{/if}
-              {#each candidate.warnings as warning (warning)}
+              {#each candidate.warnings as warning}
                 <span class="warning inline">{warning}</span>
               {/each}
             </li>

@@ -601,6 +601,7 @@ appears in the preview before anything is saved:
 | a title longer than the limit            | trimmed, with a note                                      |
 | a `mailto:` or other non-http `URL`      | dropped, with a note                                      |
 | `RRULE`                                  | imported as a single occurrence, with a note              |
+| `RECURRENCE-ID` (a moved occurrence)     | imported as its own event, under the series' `UID`        |
 | `STATUS:CANCELLED`, or no `DTSTART`      | skipped, and counted in the file's warnings               |
 | `VTODO`, `VJOURNAL`                      | ignored; only `VEVENT` is an event                        |
 
@@ -609,6 +610,11 @@ as one typed in by hand, so nothing gets in through the importer that could not
 have been created normally. The whole import is one transaction: every event is
 validated and the permission checked before any of them is written, so a file
 either lands completely or not at all.
+
+A `UID` is therefore not unique within an import, and neither is a warning:
+a series and each of its moved occurrences share one `UID`, and two entries can
+raise word-for-word the same note. Nothing that renders or stores a preview may
+treat either as an identifier.
 
 At most 200 events and 1 MiB per file.
 
