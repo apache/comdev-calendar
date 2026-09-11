@@ -235,7 +235,8 @@ for instance under systemd with your own worker settings:
 uv run hypercorn --bind 0.0.0.0:8080 --workers 1 'asfcalendar.app:create_app()'
 ```
 
-Use one worker. asfquart keeps the pending OAuth states in a process-local
+#### Use one worker 
+`asfquart` keeps the pending OAuth states in a process-local
 dictionary, so with several workers a login started on one and completed on
 another will fail. This is
 [a known asfquart limitation](https://github.com/apache/infrastructure-asfquart/issues/52).
@@ -1115,7 +1116,7 @@ Worth being clear about, so nobody goes looking:
   nothing else.
 - No per-viewer timezone beyond the local/UTC switch. You cannot ask to read the
   calendar in a third zone that is neither yours nor UTC.
-- One process only, because of the OAuth state limitation described above.
+- One process only, because of the [OAuth state limitation](#use-one-worker).
 
 ## Licence
 
