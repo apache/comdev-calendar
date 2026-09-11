@@ -20,6 +20,9 @@ calendar.sqlite3
 calendar.sqlite3-shm
 calendar.sqlite3-wal
 
+# This is copied from config.yaml.example and modified as required
+config.yaml
+
 # Node
 node_modules/
 
