@@ -29,7 +29,7 @@
     "svelte-check": "^4.1.4",
     "swagger-ui-dist": "^5.32.15",
     "typescript": "^5.7.3",
-    "vite": "^7.3.6",
+    "vite": "^7.3.7",
     "vitest": "^5.0.0"
   }
 }
